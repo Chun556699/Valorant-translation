@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 密钥与本地配置（绝不提交）
+.env
+server/.env
+*.local
+
+# 计费数据库（运行时生成，含订单/余额数据）
+server/*.db
+server/*.db-shm
+server/*.db-wal
+
+# 打包产物
+build/
+dist/
+*.spec
+
+# 系统
+Thumbs.db
+.DS_Store
