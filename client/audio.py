@@ -149,6 +149,38 @@ class LoopbackCapture(_BaseCapture):
         log.info("回环采集已启动: %s (%dHz %dch)", info["name"], src_rate, src_ch)
 
 
+class SpeechBandFilter:
+    """语音频段带通（200Hz~3.4kHz 单极点 HPF+LPF），抑制枪声低频轰击
+    和高频杂音进入 ASR。逐块保持状态，开销可忽略。"""
+
+    def __init__(self, rate: int = TARGET_RATE,
+                 hp_hz: float = 200.0, lp_hz: float = 3400.0):
+        dt = 1.0 / rate
+        self._a_hp = (1.0 / (2 * np.pi * hp_hz)) / (1.0 / (2 * np.pi * hp_hz) + dt)
+        self._a_lp = dt / (1.0 / (2 * np.pi * lp_hz) + dt)
+        self._y = 0.0      # HPF 上一次输出
+        self._x = 0.0      # HPF 上一次输入
+        self._l = 0.0      # LPF 上一次输出
+
+    def process(self, pcm: bytes) -> bytes:
+        if not pcm:
+            return pcm
+        x = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+        y = np.empty_like(x)
+        l = np.empty_like(x)
+        a_hp, a_lp = self._a_hp, self._a_lp
+        yp, xp, lp = self._y, self._x, self._l
+        for i in range(len(x)):
+            hp = a_hp * (yp + x[i] - xp)
+            xp = x[i]
+            y[i] = hp
+            yp = hp
+            lp = lp + a_lp * (hp - lp)
+            l[i] = lp
+        self._y, self._x, self._l = yp, xp, lp
+        return np.clip(l, -32768, 32767).astype(np.int16).tobytes()
+
+
 def drain_queue(q: queue.Queue, timeout=0.5):
     """阻塞取一帧；顺带清空积压防止延迟堆积。"""
     item = q.get(timeout=timeout)

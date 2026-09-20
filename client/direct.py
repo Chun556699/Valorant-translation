@@ -43,9 +43,9 @@ def _deep_find_speaker(obj):
 def _session_config(target: str, voice: str, want_audio: bool,
                     stream: str = "mate") -> dict:
     # mate 流连续翻译多说话人 -> speaker_detection；
-    # self 流按住说话 -> manual，松开时客户端 commit 作为整句，
-    # 否则模型会在中途断句导致"只翻译了第一个分句"
-    turn = ({"type": "manual"} if stream == "self" else {
+    # self 流按住说话 -> Manual 模式（turn_detection=null），松开时客户端
+    # commit 作为整句提交，否则模型会在中途断句导致"只翻译了第一个分句"
+    turn = (None if stream == "self" else {
         "type": "speaker_detection",
         "threshold": 0.5,
         "silence_duration_ms": 1000,
@@ -231,6 +231,9 @@ class DashScopeDirect:
 
     def commit(self):
         self._send({"type": "input_audio_buffer.commit"})
+
+    def clear(self):
+        self._send({"type": "input_audio_buffer.clear"})
 
     def finish(self):
         self._send({"type": "session.finish"})

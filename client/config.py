@@ -28,6 +28,7 @@ DEFAULTS = {
     "voice": "Cherry",          # 译文播报音色
     "play_audio": True,         # 播放译文声音（TTS）
     "auto_copy": False,         # 译文定稿自动复制到剪贴板
+    "mate_filter": True,        # 队友流语音频段过滤（抑制枪声等噪声）
     "overlay_opacity": 0.85,
     "click_through": False,     # 悬浮窗鼠标穿透
     "max_bubbles": 8,

@@ -16,6 +16,7 @@ class PCMPlayer:
         self.device_index = device_index
         self.q: queue.Queue = queue.Queue(maxsize=300)
         self._running = False
+        self._playing = False
         self._stream = None
         self._thread = None
 
@@ -41,9 +42,11 @@ class PCMPlayer:
             try:
                 chunk = self.q.get(timeout=0.3)
             except queue.Empty:
+                self._playing = False
                 continue
             if chunk is None:
                 break
+            self._playing = True
             try:
                 self._stream.write(chunk)
             except Exception as e:
@@ -55,6 +58,10 @@ class PCMPlayer:
         except Exception:
             pass
         self._stream = None
+
+    def is_active(self) -> bool:
+        """是否正在播放（用于抑制 TTS 回声进入回环）。"""
+        return self._playing or not self.q.empty()
 
     def play(self, pcm24k: bytes):
         if not self._running:

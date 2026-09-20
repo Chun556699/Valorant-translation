@@ -172,5 +172,8 @@ class RelayClient:
     def commit(self):
         self._send({"type": "commit"})
 
+    def clear(self):
+        self._send({"type": "clear"})
+
     def finish(self):
         self._send({"type": "finish"})

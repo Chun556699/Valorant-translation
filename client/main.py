@@ -85,6 +85,8 @@ class App:
         self._direct = self.cfg["mode"] == "direct"
         self._test_self = False               # 测试页单独拉起自翻通道
         self._lvl_t = {"mic": 0.0, "mate": 0.0}   # 电平发射节流
+        self._mate_filter = (audio.SpeechBandFilter()
+                             if self.cfg["mate_filter"] else None)
 
     # ================= 初始化 =================
     def init(self, app: QApplication) -> bool:
@@ -238,6 +240,14 @@ class App:
                 self._emit_level("mate", chunk)
                 if self._rms(chunk) > 0.02:   # 有声音 → 悬浮窗绿点
                     self.bridge.mate_tick.emit()
+                # 语音频段过滤：削掉枪声低频/高频杂音
+                if self._mate_filter:
+                    chunk = self._mate_filter.process(chunk)
+                # TTS 播报回声抑制：播报设备是默认输出时，播报期间给
+                # 回环送静音，避免译文被采回去再翻译形成环路
+                if (self.cfg["output_device"] is None
+                        and self.player.is_active()):
+                    chunk = b"\x00" * len(chunk)
                 if self.mate_rc:
                     self.mate_rc.send_audio(chunk)
             except Exception as e:
@@ -404,6 +414,8 @@ class App:
         if self.self_rc and not self.self_rc.ready.is_set():
             self.bridge.status.emit("自翻通道未就绪，检查 Key/网络")
             return
+        if self.self_rc:
+            self.self_rc.clear()   # 清掉可能残留未提交的缓冲
         self.bridge.status.emit("说话中…（松开完成）")
 
     def _ptt_release(self):

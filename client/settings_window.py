@@ -127,6 +127,10 @@ class SettingsDialog(QDialog):
         self.auto_copy.setChecked(bool(cfg["auto_copy"]))
         form.addRow("", self.auto_copy)
 
+        self.mate_filter = QCheckBox("队友流语音频段过滤（抑制枪声/脚步声噪声）")
+        self.mate_filter.setChecked(bool(cfg["mate_filter"]))
+        form.addRow("", self.mate_filter)
+
         # ---- 悬浮窗 ----
         op_row = QHBoxLayout()
         self.opacity = QSlider(Qt.Horizontal)
@@ -274,6 +278,7 @@ class SettingsDialog(QDialog):
         c["output_device"] = self.out_combo.currentData()
         c["play_audio"] = self.play_audio.isChecked()
         c["auto_copy"] = self.auto_copy.isChecked()
+        c["mate_filter"] = self.mate_filter.isChecked()
         c["overlay_opacity"] = self.opacity.value() / 100.0
         c["max_bubbles"] = self.max_lines.value()
         c["click_through"] = self.through.isChecked()

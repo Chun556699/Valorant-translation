@@ -53,7 +53,7 @@ def _session_config(stream: str, target: str, voice: str,
                     want_audio: bool) -> dict:
     """mate 流 speaker_detection（连续多人语音自动断句+分说话人）；
     self 流 manual——按住说话松开 commit 整句翻译，防止中途断句。"""
-    turn = ({"type": "manual"} if stream == "self" else {
+    turn = (None if stream == "self" else {
         "type": "speaker_detection",
         "threshold": 0.5,
         "silence_duration_ms": 1000,
@@ -269,6 +269,8 @@ class RelaySession:
                 })
             elif t == "commit":
                 await self._up_send({"type": "input_audio_buffer.commit"})
+            elif t == "clear":
+                await self._up_send({"type": "input_audio_buffer.clear"})
             elif t == "finish":
                 await self._up_send({"type": "session.finish"})
             elif t == "bye":
