@@ -1,4 +1,6 @@
 """设置窗口：服务器/热键/目标语言/悬浮窗外观/音频设备。"""
+import threading
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QHBoxLayout,
                                QLineEdit, QPushButton, QComboBox, QSlider,
@@ -16,6 +18,7 @@ class SettingsDialog(QDialog):
     saved = Signal()
     hotkey_recording = Signal(str)   # 提示文案
     _captured = Signal(dict)         # 录入线程 -> UI 线程
+    _test_result = Signal(str, bool) # 测试线程 -> UI 线程
 
     def __init__(self, cfg, parent=None):
         super().__init__(parent)
@@ -25,6 +28,7 @@ class SettingsDialog(QDialog):
         self.setMinimumWidth(420)
         self._recorder = None
         self._captured.connect(self._hotkey_captured)
+        self._test_result.connect(self._on_test_result)
 
         lay = QVBoxLayout(self)
         form = QFormLayout()
@@ -56,6 +60,16 @@ class SettingsDialog(QDialog):
         self.server_edit = QLineEdit(cfg["server_url"])
         self._server_row = self.server_edit
         form.addRow("服务器地址", self.server_edit)
+
+        # ---- 连接测试 ----
+        self.test_btn = QPushButton("测试连接")
+        self.test_btn.clicked.connect(self._test_conn)
+        self.test_lbl = QLabel("")
+        self.test_lbl.setWordWrap(True)
+        trow = QHBoxLayout()
+        trow.addWidget(self.test_btn)
+        trow.addWidget(self.test_lbl, 1)
+        form.addRow("连通性", trow)
         self._mode_changed(self.mode.currentIndex())
 
         # ---- 热键 ----
@@ -166,6 +180,68 @@ class SettingsDialog(QDialog):
         self.cfg["hotkey"] = spec
         self.hk_lbl.setText(self._hk_text(spec))
         self.hotkey_recording.emit("changed")
+
+    def _test_conn(self):
+        """后台线程测试连通性，测的是输入框当前的值（不要求先保存）。"""
+        self.test_btn.setEnabled(False)
+        self.test_lbl.setStyleSheet("color:#888")
+        self.test_lbl.setText("测试中…")
+        args = (self.mode.currentData(),
+                self.dash_key.text().strip(),
+                self.dash_url.text().strip().rstrip("/"),
+                self.dash_model.text().strip(),
+                self.server_edit.text().strip().rstrip("/"))
+        threading.Thread(target=self._do_test, args=args, daemon=True).start()
+
+    def _do_test(self, mode, key, url, model, server):
+        try:
+            if mode == "direct":
+                if not key:
+                    raise ValueError("API Key 为空")
+                import asyncio, json
+                import websockets
+
+                async def probe():
+                    full = f"{url}?model={model}"
+                    async with websockets.connect(
+                            full,
+                            additional_headers={
+                                "Authorization": f"Bearer {key}"},
+                            open_timeout=8) as ws:
+                        await ws.send(json.dumps({
+                            "type": "session.update",
+                            "session": {
+                                "output_modalities": ["text"],
+                                "audio": {"input": {"format": {
+                                    "type": "pcm", "sample_rate": 16000}}},
+                            }}))
+                        async for raw in ws:
+                            ev = json.loads(raw)
+                            t = ev.get("type")
+                            if t in ("session.created", "session.updated"):
+                                return True, f"连接成功（{t}）"
+                            if t == "error" or ev.get("code"):
+                                msg = (ev.get("error") or {}).get("message") \
+                                    or str(ev)[:200]
+                                return False, f"服务端拒绝: {msg}"
+                        return False, "连接后无响应"
+                ok, msg = asyncio.run(asyncio.wait_for(probe(), 15))
+            else:
+                import httpx
+                r = httpx.get(f"{server}/api/meta", timeout=8)
+                if r.status_code == 200:
+                    ok, msg = True, f"服务器可达（/api/meta 200）"
+                else:
+                    ok, msg = False, f"HTTP {r.status_code}: {r.text[:150]}"
+        except Exception as e:
+            ok, msg = False, f"失败: {e}"
+        # 注意：此处仍在后台线程，用信号回 UI
+        self._test_result.emit(msg, ok)
+
+    def _on_test_result(self, msg, ok):
+        self.test_btn.setEnabled(True)
+        self.test_lbl.setStyleSheet(f"color:{'#2a7' if ok else '#d33'}")
+        self.test_lbl.setText(("✓ " if ok else "✗ ") + msg)
 
     def _mode_changed(self, idx):
         direct = self.mode.currentData() == "direct"
