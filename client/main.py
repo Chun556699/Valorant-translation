@@ -14,8 +14,9 @@ import sys
 import threading
 import time
 
-from PySide6.QtCore import QObject, Signal
-from PySide6.QtGui import QAction
+from PySide6.QtCore import QObject, Signal, Qt
+from PySide6.QtGui import QAction, QPixmap, QPainter, QColor, QFont, QIcon
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (QApplication, QSystemTrayIcon, QMenu,
                                QMessageBox, QStyle)
 
@@ -470,35 +471,130 @@ class App:
                ("队友…" if self._mate_on else "队友关")
         state = "翻译中" if self.running else "就绪"
         self.bridge.status.emit(f"{state} | {mate}")
+        try:
+            self.win.set_conn(self.running)
+        except AttributeError:
+            pass
 
     # ================= 托盘 =================
+    @staticmethod
+    def _tray_icon() -> QIcon:
+        """画一个 'V' 徽标图标（不依赖外部资源文件）。"""
+        pm = QPixmap(64, 64)
+        pm.fill(Qt.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setBrush(QColor("#4f8cff"))
+        p.setPen(Qt.NoPen)
+        p.drawRoundedRect(4, 4, 56, 56, 14, 14)
+        p.setPen(QColor("#ffffff"))
+        p.setFont(QFont("Microsoft YaHei UI", 30, QFont.Bold))
+        p.drawText(pm.rect(), Qt.AlignCenter, "V")
+        p.end()
+        return QIcon(pm)
+
     def _make_tray(self, app):
         tray = QSystemTrayIcon(self.win)
-        tray.setIcon(self.win.style().standardIcon(QStyle.SP_MediaPlay))
+        icon = self._tray_icon()
+        tray.setIcon(icon)
+        self.win.setWindowIcon(icon)   # 任务栏也用同一图标
         tray.setToolTip("VTranslate 语音翻译")
+
         menu = QMenu()
-        show_main = QAction("主窗口")
-        show_main.triggered.connect(self.win.show)
-        show_ov = QAction("字幕窗")
-        show_ov.triggered.connect(self.overlay.show)
-        settings = QAction("设置")
-        settings.triggered.connect(self.show_settings)
-        quit_a = QAction("退出")
-        quit_a.triggered.connect(app.quit)
-        for a in (show_main, show_ov, settings, quit_a):
+        self._act_run = QAction("开始翻译")
+        self._act_run.triggered.connect(
+            lambda: self.set_running(not self.running))
+        self._act_ov = QAction("显示字幕窗")
+        self._act_ov.setCheckable(True)
+        self._act_ov.triggered.connect(
+            lambda on: self.overlay.show() if on else self.overlay.hide())
+        self._act_through = QAction("字幕穿透")
+        self._act_through.setCheckable(True)
+        self._act_through.triggered.connect(
+            lambda on: self.overlay._on_pin_toggle(on))
+        act_main = QAction("打开主窗口")
+        act_main.triggered.connect(self._raise_main)
+        act_settings = QAction("设置")
+        act_settings.triggered.connect(self.show_settings)
+        act_quit = QAction("退出")
+        act_quit.triggered.connect(app.quit)
+        for a in (act_main, self._act_run, self._act_ov, self._act_through):
             menu.addAction(a)
+        menu.addSeparator()
+        menu.addAction(act_settings)
+        menu.addSeparator()
+        menu.addAction(act_quit)
+
+        def _sync():
+            self._act_run.setText("停止翻译" if self.running else "开始翻译")
+            self._act_ov.setChecked(self.overlay.isVisible())
+            self._act_through.setChecked(self.cfg["click_through"])
+        menu.aboutToShow.connect(_sync)
+
         tray.setContextMenu(menu)
         tray.activated.connect(
-            lambda r: self.win.show() if r == QSystemTrayIcon.Trigger else None)
+            lambda r: self._raise_main()
+            if r == QSystemTrayIcon.Trigger else None)
         tray.show()
         self.tray = tray
 
+    def _raise_main(self):
+        self.win.show()
+        self.win.raise_()
+        self.win.activateWindow()
+
+
+_SINGLE_KEY = "vtranslate-single-instance"
+
+
+def _try_raise_existing() -> bool:
+    """已有实例在跑：通知它弹出窗口后退出本进程。"""
+    sock = QLocalSocket()
+    sock.connectToServer(_SINGLE_KEY)
+    if not sock.waitForConnected(300):
+        return False
+    sock.write(b"raise")
+    sock.flush()
+    sock.waitForBytesWritten(300)
+    return True
+
+
+def _listen_single(app_obj: "App") -> QLocalServer:
+    srv = QLocalServer()
+    QLocalServer.removeServer(_SINGLE_KEY)
+    srv.listen(_SINGLE_KEY)
+
+    def _on_conn():
+        while srv.hasPendingConnections():
+            c = srv.nextPendingConnection()
+            c.waitForReadyRead(100)
+            c.close()
+        app_obj._raise_main()
+        app_obj.overlay.show()
+    srv.newConnection.connect(_on_conn)
+    return srv
+
 
 def main():
+    import ctypes
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "chunfff.VTranslate")
+    except Exception:
+        pass
+
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("VTranslate")
+
+    if _try_raise_existing():
+        sys.exit(0)
+
+    from main_window import APP_QSS
+    app.setStyleSheet(APP_QSS)
+
     a = App()
+    a._single_srv = _listen_single(a)   # 防 GC
     if not a.init(app):
         sys.exit(0)
     sys.exit(app.exec())

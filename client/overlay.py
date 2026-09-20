@@ -116,6 +116,10 @@ class Overlay(QWidget):
         self.pin_btn.setCheckable(True)
         self.pin_btn.setChecked(self._click_through)
         self.pin_btn.toggled.connect(self._on_pin_toggle)
+        self.fold_btn = QPushButton("—")
+        self.fold_btn.setCheckable(True)
+        self.fold_btn.setToolTip("收起为顶栏 / 展开")
+        self.fold_btn.toggled.connect(self._on_fold)
         buttons = [("设置", self.open_settings.emit)]
         if cfg["mode"] != "direct":   # 直连模式没有充值概念
             buttons.insert(0, ("充值", self.open_recharge.emit))
@@ -125,7 +129,7 @@ class Overlay(QWidget):
             bl.addWidget(b)
         close = QPushButton("✕")
         close.clicked.connect(self.hide)
-        for w in (self.mate_btn, self.pin_btn, close):
+        for w in (self.mate_btn, self.pin_btn, self.fold_btn, close):
             w.setStyleSheet("QPushButton{color:#ddd;background:#3a3a3a;border:0;"
                             "padding:2px 8px;font-size:11px;border-radius:3px}"
                             "QPushButton:checked{background:#2266aa;color:#fff}")
@@ -134,6 +138,7 @@ class Overlay(QWidget):
         bl.insertWidget(2, self.mate_dot)
         bl.addWidget(self.mate_btn)
         bl.addWidget(self.pin_btn)
+        bl.addWidget(self.fold_btn)
         bl.addWidget(close)
         root.addWidget(bar)
 
@@ -187,6 +192,19 @@ class Overlay(QWidget):
         self.cfg["mate_enabled"] = on
         self.cfg.save()
         self.toggle_mate.emit(on)
+
+    def _on_fold(self, folded: bool):
+        """收起：只留顶栏一条；展开恢复。"""
+        self.fold_btn.setText("□" if folded else "—")
+        if folded:
+            self._expand_h = self.height()
+            self.scroll.setVisible(False)
+            self.setFixedHeight(self.sizeHint().height())
+        else:
+            self.scroll.setVisible(True)
+            self.setMinimumHeight(0)
+            self.setMaximumHeight(16777215)
+            self.resize(self.width(), getattr(self, "_expand_h", 260))
 
     # ---- 拖动 ----
     def mousePressEvent(self, e):

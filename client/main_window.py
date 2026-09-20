@@ -14,13 +14,60 @@ from PySide6.QtWidgets import (QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
                                QLabel, QPushButton, QComboBox, QRadioButton,
                                QButtonGroup, QStackedWidget, QFrame,
                                QProgressBar, QListWidget, QListWidgetItem,
-                               QScrollArea, QMessageBox, QApplication)
+                               QScrollArea, QMessageBox, QApplication,
+                               QSizeGrip)
 
 from history import History
 
 log = logging.getLogger("main_window")
 
-ACCENT = "#5cb8d9"
+# ---- 深色主题配色 ----
+BG = "#14161b"
+PANEL = "#191c22"
+CARD = "#20242e"
+BORDER = "#2b303c"
+TEXT = "#e8ebf2"
+MUT = "#98a0b3"
+ACCENT = "#4f8cff"
+DANGER = "#e0655f"
+OK = "#46c27e"
+
+APP_QSS = f"""
+    * {{ font-family:'Microsoft YaHei UI'; font-size:13px; }}
+    QWidget {{ background:{BG}; color:{TEXT}; }}
+    QDialog, QMessageBox {{ background:{BG}; }}
+    QLabel {{ background:transparent; }}
+    QPushButton {{ background:#2a2f3a; color:{TEXT}; border:1px solid {BORDER};
+        border-radius:6px; padding:6px 12px; }}
+    QPushButton:hover {{ background:#333947; }}
+    QPushButton:checked {{ background:{ACCENT}; color:#fff; border-color:{ACCENT}; }}
+    QPushButton:disabled {{ color:#5a6272; }}
+    QLineEdit, QSpinBox, QComboBox, QTextEdit, QTextBrowser {{
+        background:#1a1d24; color:{TEXT}; border:1px solid {BORDER};
+        border-radius:6px; padding:5px 8px; }}
+    QComboBox QAbstractItemView {{ background:#22262f; color:{TEXT};
+        selection-background-color:{ACCENT}; border:1px solid {BORDER}; }}
+    QCheckBox, QRadioButton {{ spacing:6px; background:transparent; }}
+    QProgressBar {{ background:#262b36; border:0; border-radius:5px;
+        text-align:center; }}
+    QProgressBar::chunk {{ background:{ACCENT}; border-radius:5px; }}
+    QListWidget {{ background:{CARD}; border:1px solid {BORDER};
+        border-radius:8px; }}
+    QListWidget::item {{ padding:8px; border-bottom:1px solid {BORDER}; }}
+    QScrollArea, QScrollArea > QWidget > QWidget {{ background:transparent; }}
+    QScrollBar:vertical {{ background:transparent; width:8px; }}
+    QScrollBar::handle:vertical {{ background:#3a4150; border-radius:4px;
+        min-height:30px; }}
+    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height:0; }}
+    QMenu {{ background:#22262f; color:{TEXT}; border:1px solid {BORDER}; }}
+    QMenu::item:selected {{ background:{ACCENT}; }}
+    QTabWidget::pane {{ border:1px solid {BORDER}; border-radius:6px; }}
+    QTabBar::tab {{ background:#1a1d24; color:{MUT}; padding:7px 16px;
+        border-top-left-radius:6px; border-top-right-radius:6px; }}
+    QTabBar::tab:selected {{ background:{CARD}; color:{TEXT}; }}
+    QToolTip {{ background:#2a2f3a; color:{TEXT}; border:1px solid {BORDER}; }}
+    QSizeGrip {{ background:transparent; }}
+"""
 
 
 def _fmt_ts(ts: int) -> str:
@@ -30,8 +77,8 @@ def _fmt_ts(ts: int) -> str:
 def _card() -> QFrame:
     f = QFrame()
     f.setObjectName("card")
-    f.setStyleSheet("#card{background:#ffffff;border-radius:10px;"
-                    "border:1px solid #eee}")
+    f.setStyleSheet(f"#card{{background:{CARD};border-radius:12px;"
+                    f"border:1px solid {BORDER}}}")
     return f
 
 
@@ -61,7 +108,7 @@ class HomePage(QWidget):
         cl.addLayout(head)
 
         self.chips = QLabel("")
-        self.chips.setStyleSheet(f"color:{ACCENT};background:#eaf7fc;"
+        self.chips.setStyleSheet(f"color:{ACCENT};background:#222d44;"
                                  "border-radius:9px;padding:4px 10px;"
                                  "font-size:12px")
         self.chips.setMaximumWidth(360)
@@ -76,14 +123,15 @@ class HomePage(QWidget):
         self.toggle_btn.setMinimumHeight(44)
         self.toggle_btn.setStyleSheet(
             f"QPushButton{{background:{ACCENT};color:#fff;font-size:16px;"
-            "border:0;border-radius:6px}"
-            "QPushButton:checked{background:#e0685f}")
+            "border:0;border-radius:8px}"
+            "QPushButton:hover{{background:#3f7bee}}"
+            f"QPushButton:checked{{background:{DANGER}}}")
         self.toggle_btn.setCheckable(True)
         self.toggle_btn.toggled.connect(self._on_toggle)
         cl.addWidget(self.toggle_btn)
 
         self.balance_lbl = QLabel("余额 ¥0.00  约 0 分钟")
-        self.balance_lbl.setStyleSheet("color:#888;padding-top:10px")
+        self.balance_lbl.setStyleSheet(f"color:{MUT};padding-top:10px")
         cl.addWidget(self.balance_lbl)
         row.addWidget(card, 3)
 
@@ -116,7 +164,7 @@ class HomePage(QWidget):
         eh.addStretch(1)
         sub_btn = QPushButton("开通订阅")
         sub_btn.setStyleSheet(f"color:{ACCENT};border:1px solid {ACCENT};"
-                              "border-radius:4px;padding:2px 10px;background:#fff")
+                              f"border-radius:4px;padding:2px 10px;background:{CARD}")
         sub_btn.clicked.connect(lambda: self.goto_purchase.emit("sub"))
         eh.addWidget(sub_btn)
         el.addLayout(eh)
@@ -128,11 +176,11 @@ class HomePage(QWidget):
         self.trial_bar.setTextVisible(False)
         self.trial_bar.setFixedHeight(8)
         self.trial_bar.setStyleSheet(
-            f"QProgressBar{{background:#eee;border-radius:4px}}"
+            "QProgressBar{background:#262b36;border-radius:4px}"
             f"QProgressBar::chunk{{background:{ACCENT};border-radius:4px}}")
         el.addWidget(self.trial_bar)
         self.trial_info = QLabel("")
-        self.trial_info.setStyleSheet("color:#999;font-size:12px")
+        self.trial_info.setStyleSheet(f"color:{MUT};font-size:12px")
         el.addWidget(self.trial_info)
         erow.addWidget(ec)
 
@@ -147,7 +195,7 @@ class HomePage(QWidget):
         self.card_lbl = QLabel("时长卡 0 分钟")
         self.card_lbl.setStyleSheet("font-weight:bold;font-size:15px")
         self.sub_lbl = QLabel("订阅未开通")
-        self.sub_lbl.setStyleSheet("color:#999;font-size:12px")
+        self.sub_lbl.setStyleSheet(f"color:{MUT};font-size:12px")
         buy = QPushButton("购买时长卡")
         buy.setStyleSheet(f"background:{ACCENT};color:#fff;border:0;"
                           "border-radius:4px;padding:6px")
@@ -273,7 +321,7 @@ class SubtitlePage(QWidget):
         tip = QLabel("提示：开启穿透后游戏中鼠标点击会直接穿过字幕，"
                      "可在托盘菜单重新打开设置。")
         tip.setWordWrap(True)
-        tip.setStyleSheet("color:#999;font-size:12px")
+        tip.setStyleSheet(f"color:{MUT};font-size:12px")
         cl.addWidget(tip)
         lay.addWidget(card)
         lay.addStretch(1)
@@ -309,9 +357,9 @@ class TestPage(QWidget):
         self.lamp = QLabel("按住绑定的热键说话")
         self.lamp.setAlignment(Qt.AlignCenter)
         self.lamp.setMinimumHeight(90)
-        self._lamp_off = ("background:#eef0f2;color:#999;border-radius:10px;"
+        self._lamp_off = (f"background:#262b36;color:{MUT};border-radius:10px;"
                           "font-size:16px;font-weight:bold")
-        self._lamp_on = ("background:#e05f5f;color:#fff;border-radius:10px;"
+        self._lamp_on = (f"background:{DANGER};color:#fff;border-radius:10px;"
                          "font-size:18px;font-weight:bold")
         self.lamp.setStyleSheet(self._lamp_off)
         cl.addWidget(self.lamp)
@@ -325,7 +373,7 @@ class TestPage(QWidget):
             bar.setTextVisible(False)
             bar.setFixedHeight(10)
             bar.setStyleSheet(
-                "QProgressBar{background:#eee;border-radius:5px}"
+                "QProgressBar{background:#262b36;border-radius:5px}"
                 f"QProgressBar::chunk{{background:{ACCENT};border-radius:5px}}")
             setattr(self, attr, bar)
             row.addWidget(bar, 1)
@@ -337,12 +385,12 @@ class TestPage(QWidget):
         self.test_btn.setCheckable(True)
         self.test_btn.setStyleSheet(
             f"QPushButton{{background:{ACCENT};color:#fff;border:0;"
-            "border-radius:5px;padding:8px 14px}"
-            "QPushButton:checked{background:#e0685f}")
+            "border-radius:6px;padding:8px 14px}"
+            f"QPushButton:checked{{background:{DANGER}}}")
         self.test_btn.toggled.connect(self._toggled)
         row.addWidget(self.test_btn)
         self.status_lbl = QLabel("")
-        self.status_lbl.setStyleSheet("color:#888")
+        self.status_lbl.setStyleSheet(f"color:{MUT}")
         row.addWidget(self.status_lbl, 1)
         cl.addLayout(row)
 
@@ -350,7 +398,7 @@ class TestPage(QWidget):
                      "电平条验证采集是否正常（麦克风条应随说话跳动）。"
                      "热键在「设置」页录入。")
         tip.setWordWrap(True)
-        tip.setStyleSheet("color:#999;font-size:12px")
+        tip.setStyleSheet(f"color:{MUT};font-size:12px")
         cl.addWidget(tip)
         lay.addWidget(card)
         lay.addStretch(1)
@@ -398,8 +446,9 @@ class HistoryPage(QWidget):
         head.addWidget(clr)
         lay.addLayout(head)
         self.listw = QListWidget()
-        self.listw.setStyleSheet("QListWidget{background:#fff;border-radius:8px;"
-                                 "border:1px solid #eee}")
+        self.listw.setStyleSheet(
+            f"QListWidget{{background:{CARD};border-radius:8px;"
+            f"border:1px solid {BORDER}}}")
         lay.addWidget(self.listw)
 
     def refresh(self):
@@ -433,13 +482,13 @@ class ReferralPage(QWidget):
         tip = QLabel("好友注册时填写你的推广码，其每笔充值你将获得 "
                      "实付金额一定比例的返利（返到余额）。")
         tip.setWordWrap(True)
-        tip.setStyleSheet("color:#888")
+        tip.setStyleSheet(f"color:{MUT}")
         cl.addWidget(tip)
 
         row = QHBoxLayout()
         self.code_lbl = QLabel("推广码: -")
         self.code_lbl.setStyleSheet(
-            "font-size:18px;font-weight:bold;color:#333")
+            f"font-size:18px;font-weight:bold;color:{TEXT}")
         cp = QPushButton("复制")
         cp.clicked.connect(self._copy)
         row.addWidget(self.code_lbl)
@@ -448,7 +497,7 @@ class ReferralPage(QWidget):
         cl.addLayout(row)
 
         self.stats_lbl = QLabel("")
-        self.stats_lbl.setStyleSheet("color:#666")
+        self.stats_lbl.setStyleSheet(f"color:{MUT}")
         cl.addWidget(self.stats_lbl)
         lay.addWidget(card)
         lay.addStretch(1)
@@ -620,7 +669,7 @@ class _TextPage(QWidget):
         cl.addWidget(t)
         body = QLabel(text)
         body.setWordWrap(True)
-        body.setStyleSheet("color:#555;line-height:1.6")
+        body.setStyleSheet(f"color:{MUT};line-height:1.6")
         body.setTextInteractionFlags(Qt.TextSelectableByMouse)
         cl.addWidget(body)
         lay.addWidget(card)
@@ -708,6 +757,66 @@ class ContactPage(_TextPage):
         super().__init__("联系我们", CONTACT_TEXT)
 
 
+# ================= 自定义标题栏 =================
+class _TitleBar(QFrame):
+    """无边框标题栏：logo 徽标 + 标题 + 运行状态点 + 最小化/关闭。
+    按住拖动移动窗口，双击切换最大化。"""
+
+    def __init__(self, win):
+        super().__init__()
+        self._win = win
+        self._drag = None
+        self.setObjectName("titlebar")
+        self.setFixedHeight(42)
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(14, 0, 6, 0)
+        lay.setSpacing(8)
+
+        badge = QLabel("V")
+        badge.setFixedSize(22, 22)
+        badge.setAlignment(Qt.AlignCenter)
+        badge.setStyleSheet(f"background:{ACCENT};color:#fff;border-radius:6px;"
+                            "font-weight:bold;font-size:13px")
+        lay.addWidget(badge)
+        title = QLabel("VTranslate")
+        title.setStyleSheet("font-weight:bold;font-size:14px")
+        lay.addWidget(title)
+        self.dot = QLabel("●")
+        self.dot.setStyleSheet(f"color:{MUT};font-size:10px")
+        self.dot.setToolTip("灰=待机 绿=翻译中")
+        lay.addWidget(self.dot)
+        lay.addStretch(1)
+
+        for txt, slot, obj in (("—", win.showMinimized, "min"),
+                               ("✕", win.close, "close")):
+            b = QPushButton(txt)
+            b.setObjectName(f"tb_{obj}")
+            b.setFixedSize(40, 28)
+            b.clicked.connect(slot)
+            lay.addWidget(b)
+
+    def set_active(self, on: bool):
+        self.dot.setStyleSheet(
+            f"color:{OK if on else MUT};font-size:10px")
+
+    # 拖动
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._drag = e.globalPosition().toPoint() - self._win.pos()
+
+    def mouseMoveEvent(self, e):
+        if self._drag is not None and e.buttons() & Qt.LeftButton:
+            self._win.move(e.globalPosition().toPoint() - self._drag)
+
+    def mouseReleaseEvent(self, _):
+        self._drag = None
+
+    def mouseDoubleClickEvent(self, _):
+        self._win.showNormal() if self._win.isMaximized() \
+            else self._win.showMaximized()
+
+
 # ================= 主窗 =================
 class MainWindow(QMainWindow):
     start_stop = Signal(bool)
@@ -717,11 +826,13 @@ class MainWindow(QMainWindow):
     logout = Signal()
     test_self = Signal(bool)
 
+    # (图标, 名称, key)
     NAV = [
-        ("翻译", "home"), ("字幕窗口", "subtitle"), ("按键测试", "test"),
-        ("翻译记录", "history"),
-        ("推广", "ref"), ("购买中心", "buy"), ("设置教程", "tutorial"),
-        ("设置", "settings"), ("联系我们", "contact"),
+        ("🎧", "翻译", "home"), ("🪟", "字幕", "subtitle"),
+        ("🎹", "测试", "test"), ("📜", "记录", "history"),
+        ("📣", "推广", "ref"), ("🛒", "购买", "buy"),
+        ("📖", "教程", "tutorial"), ("⚙", "设置", "settings"),
+        ("💬", "联系", "contact"),
     ]
 
     def __init__(self, cfg, api, history):
@@ -730,33 +841,41 @@ class MainWindow(QMainWindow):
         self.api = api
         self._direct = cfg["mode"] == "direct"
         self.setWindowTitle("VTranslate")
-        self.resize(960, 640)
+        self.resize(940, 620)
+        # 无边框 + 圆角
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
+        self.setAttribute(Qt.WA_TranslucentBackground)
 
         central = QWidget()
-        root = QHBoxLayout(central)
+        central.setObjectName("rootwin")
+        outer = QVBoxLayout(central)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self.titlebar = _TitleBar(self)
+        outer.addWidget(self.titlebar)
+
+        content = QWidget()
+        root = QHBoxLayout(content)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
         # ---- 侧边栏 ----
         side = QFrame()
         side.setObjectName("sidebar")
-        side.setFixedWidth(170)
+        side.setFixedWidth(96)
         sl = QVBoxLayout(side)
-        sl.setContentsMargins(10, 14, 10, 10)
-        sl.setSpacing(2)
-        logo = QLabel("VTranslate")
-        logo.setStyleSheet(f"font-size:18px;font-weight:bold;color:{ACCENT};"
-                           "padding:4px 8px 12px")
-        sl.addWidget(logo)
+        sl.setContentsMargins(8, 8, 8, 8)
+        sl.setSpacing(3)
 
         self._nav_btns: list[QPushButton] = []
         self._nav_keys: list[str] = []
         self.pages = QStackedWidget()
-        for i, (name, key) in enumerate(self.NAV):
+        for icon, name, key in self.NAV:
             # 直连模式隐藏依赖服务器的页面
             if self._direct and key in ("ref", "buy"):
                 continue
-            b = QPushButton(name)
+            b = QPushButton(f"{icon}\n{name}")
             b.setObjectName("nav")
             b.setCheckable(True)
             b.clicked.connect(lambda _, k=key: self.switch_to(k))
@@ -765,11 +884,15 @@ class MainWindow(QMainWindow):
             self._nav_keys.append(key)
         sl.addStretch(1)
 
-        self.side_balance = QLabel("余额 ¥0.00")
-        self.side_balance.setStyleSheet("font-weight:bold;padding:4px 8px")
-        self.side_user = QLabel("未登录")
-        self.side_user.setStyleSheet("color:#888;padding:0 8px")
-        out = QPushButton("退出登录")
+        self.side_balance = QLabel("¥0.00")
+        self.side_balance.setStyleSheet(f"font-weight:bold;color:{TEXT};"
+                                        "padding:4px 2px;font-size:12px")
+        self.side_balance.setAlignment(Qt.AlignCenter)
+        self.side_user = QLabel("")
+        self.side_user.setStyleSheet(f"color:{MUT};padding:0 2px;font-size:11px")
+        self.side_user.setAlignment(Qt.AlignCenter)
+        self.side_user.setWordWrap(True)
+        out = QPushButton("退出")
         out.setObjectName("nav")
         out.clicked.connect(self.logout.emit)
         sl.addWidget(self.side_balance)
@@ -801,7 +924,7 @@ class MainWindow(QMainWindow):
             "设置", "点击下方按钮打开设置面板。")
         open_btn = QPushButton("打开设置面板")
         open_btn.setStyleSheet(f"background:{ACCENT};color:#fff;border:0;"
-                               "border-radius:5px;padding:8px;max-width:200px")
+                               "border-radius:6px;padding:8px;max-width:200px")
         open_btn.clicked.connect(self.open_settings.emit)
         self.settings_holder.layout().itemAt(0).widget().layout()\
             .addWidget(open_btn)
@@ -821,6 +944,14 @@ class MainWindow(QMainWindow):
             self.pages.addWidget(self._page_map[key])
         rl.addWidget(self.pages, 1)
         root.addWidget(right, 1)
+        outer.addWidget(content, 1)
+
+        # 右下角尺寸抓手
+        grip_row = QHBoxLayout()
+        grip_row.setContentsMargins(0, 0, 4, 2)
+        grip_row.addStretch(1)
+        grip_row.addWidget(QSizeGrip(self))
+        outer.addLayout(grip_row)
         self.setCentralWidget(central)
 
         # 信号
@@ -833,18 +964,28 @@ class MainWindow(QMainWindow):
             self.buy_page.paid.connect(self._on_paid)
 
         self.setStyleSheet(f"""
-            QMainWindow, QWidget {{ background:#f6f3ee; color:#333;
-                font-family:'Microsoft YaHei UI'; }}
-            #sidebar {{ background:#fff; border-right:1px solid #eee; }}
-            #nav {{ text-align:left; padding:9px 12px; border:0;
-                border-radius:6px; color:#444; font-size:14px; }}
-            #nav:hover {{ background:#f0f7fa; }}
-            #nav:checked {{ background:{ACCENT}; color:#fff; }}
-            #banner {{ background:#fff6e5; color:#9a7b2d; padding:8px 14px;
-                border-bottom:1px solid #f0e3c0; }}
-            QPushButton {{ font-family:'Microsoft YaHei UI'; }}
+            #rootwin {{ background:{BG}; border-radius:12px;
+                border:1px solid {BORDER}; }}
+            #titlebar {{ background:{PANEL}; border-top-left-radius:12px;
+                border-top-right-radius:12px;
+                border-bottom:1px solid {BORDER}; }}
+            #tb_min, #tb_close {{ background:transparent; border:0;
+                color:{MUT}; font-size:14px; border-radius:5px; }}
+            #tb_min:hover {{ background:#333947; color:{TEXT}; }}
+            #tb_close:hover {{ background:{DANGER}; color:#fff; }}
+            #sidebar {{ background:{PANEL}; border-right:1px solid {BORDER};
+                border-bottom-left-radius:12px; }}
+            #nav {{ text-align:center; padding:9px 2px; border:0;
+                border-radius:8px; color:{MUT}; font-size:12px; }}
+            #nav:hover {{ background:#262b36; color:{TEXT}; }}
+            #nav:checked {{ background:#223150; color:{ACCENT}; }}
+            #banner {{ background:#3a3220; color:#e8c46a; padding:8px 14px;
+                border-bottom:1px solid #554726; }}
         """)
         self.switch(0)
+
+    def set_conn(self, running: bool):
+        self.titlebar.set_active(running)
 
     def switch(self, idx: int):
         self.pages.setCurrentIndex(idx)
