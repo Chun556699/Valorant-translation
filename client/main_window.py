@@ -21,34 +21,34 @@ from history import History
 
 log = logging.getLogger("main_window")
 
-# ---- 深色主题配色 ----
-BG = "#14161b"
-PANEL = "#191c22"
-CARD = "#20242e"
-BORDER = "#2b303c"
-TEXT = "#e8ebf2"
-MUT = "#98a0b3"
+# ---- 浅色主题配色 ----
+BG = "#f4f5f7"
+PANEL = "#ffffff"
+CARD = "#ffffff"
+BORDER = "#e3e6ea"
+TEXT = "#262a33"
+MUT = "#7a8494"
 ACCENT = "#ff4655"          # Valorant 红
 DANGER = "#e0655f"
-OK = "#46c27e"
+OK = "#2fae66"
 
 APP_QSS = f"""
     * {{ font-family:'Microsoft YaHei UI'; font-size:12px; }}
     QWidget {{ background:{BG}; color:{TEXT}; }}
     QDialog, QMessageBox {{ background:{BG}; }}
     QLabel {{ background:transparent; }}
-    QPushButton {{ background:#2a2f3a; color:{TEXT}; border:1px solid {BORDER};
+    QPushButton {{ background:#ffffff; color:{TEXT}; border:1px solid {BORDER};
         border-radius:6px; padding:5px 10px; }}
-    QPushButton:hover {{ background:#333947; }}
+    QPushButton:hover {{ background:#f0f1f4; }}
     QPushButton:checked {{ background:{ACCENT}; color:#fff; border-color:{ACCENT}; }}
-    QPushButton:disabled {{ color:#5a6272; }}
+    QPushButton:disabled {{ color:#b0b7c2; }}
     QLineEdit, QSpinBox, QComboBox, QTextEdit, QTextBrowser {{
-        background:#1a1d24; color:{TEXT}; border:1px solid {BORDER};
+        background:#ffffff; color:{TEXT}; border:1px solid {BORDER};
         border-radius:6px; padding:5px 8px; }}
-    QComboBox QAbstractItemView {{ background:#22262f; color:{TEXT};
+    QComboBox QAbstractItemView {{ background:#ffffff; color:{TEXT};
         selection-background-color:{ACCENT}; border:1px solid {BORDER}; }}
     QCheckBox, QRadioButton {{ spacing:6px; background:transparent; }}
-    QProgressBar {{ background:#262b36; border:0; border-radius:5px;
+    QProgressBar {{ background:#eceff3; border:0; border-radius:5px;
         text-align:center; }}
     QProgressBar::chunk {{ background:{ACCENT}; border-radius:5px; }}
     QListWidget {{ background:{CARD}; border:1px solid {BORDER};
@@ -56,16 +56,16 @@ APP_QSS = f"""
     QListWidget::item {{ padding:8px; border-bottom:1px solid {BORDER}; }}
     QScrollArea, QScrollArea > QWidget > QWidget {{ background:transparent; }}
     QScrollBar:vertical {{ background:transparent; width:8px; }}
-    QScrollBar::handle:vertical {{ background:#3a4150; border-radius:4px;
+    QScrollBar::handle:vertical {{ background:#cfd4dc; border-radius:4px;
         min-height:30px; }}
     QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height:0; }}
-    QMenu {{ background:#22262f; color:{TEXT}; border:1px solid {BORDER}; }}
-    QMenu::item:selected {{ background:{ACCENT}; }}
+    QMenu {{ background:#ffffff; color:{TEXT}; border:1px solid {BORDER}; }}
+    QMenu::item:selected {{ background:{ACCENT}; color:#fff; }}
     QTabWidget::pane {{ border:1px solid {BORDER}; border-radius:6px; }}
-    QTabBar::tab {{ background:#1a1d24; color:{MUT}; padding:7px 16px;
+    QTabBar::tab {{ background:#eceff3; color:{MUT}; padding:7px 16px;
         border-top-left-radius:6px; border-top-right-radius:6px; }}
-    QTabBar::tab:selected {{ background:{CARD}; color:{TEXT}; }}
-    QToolTip {{ background:#2a2f3a; color:{TEXT}; border:1px solid {BORDER}; }}
+    QTabBar::tab:selected {{ background:#ffffff; color:{TEXT}; }}
+    QToolTip {{ background:#ffffff; color:{TEXT}; border:1px solid {BORDER}; }}
     QSizeGrip {{ background:transparent; }}
 """
 
@@ -108,7 +108,7 @@ class HomePage(QWidget):
         cl.addLayout(head)
 
         self.chips = QLabel("")
-        self.chips.setStyleSheet(f"color:{ACCENT};background:#3a2028;"
+        self.chips.setStyleSheet(f"color:{ACCENT};background:#ffe9eb;"
                                  "border-radius:9px;padding:4px 10px;"
                                  "font-size:12px")
         self.chips.setMaximumWidth(360)
@@ -176,7 +176,7 @@ class HomePage(QWidget):
         self.trial_bar.setTextVisible(False)
         self.trial_bar.setFixedHeight(8)
         self.trial_bar.setStyleSheet(
-            "QProgressBar{background:#262b36;border-radius:4px}"
+            "QProgressBar{background:#eceff3;border-radius:4px}"
             f"QProgressBar::chunk{{background:{ACCENT};border-radius:4px}}")
         el.addWidget(self.trial_bar)
         self.trial_info = QLabel("")
@@ -357,7 +357,7 @@ class TestPage(QWidget):
         self.lamp = QLabel("按住绑定的热键说话")
         self.lamp.setAlignment(Qt.AlignCenter)
         self.lamp.setMinimumHeight(64)
-        self._lamp_off = (f"background:#262b36;color:{MUT};border-radius:10px;"
+        self._lamp_off = (f"background:#eef0f3;color:{MUT};border-radius:10px;"
                           "font-size:14px;font-weight:bold")
         self._lamp_on = (f"background:{DANGER};color:#fff;border-radius:10px;"
                          "font-size:16px;font-weight:bold")
@@ -373,7 +373,7 @@ class TestPage(QWidget):
             bar.setTextVisible(False)
             bar.setFixedHeight(10)
             bar.setStyleSheet(
-                "QProgressBar{background:#262b36;border-radius:5px}"
+                "QProgressBar{background:#eceff3;border-radius:5px}"
                 f"QProgressBar::chunk{{background:{ACCENT};border-radius:5px}}")
             setattr(self, attr, bar)
             row.addWidget(bar, 1)
@@ -829,6 +829,7 @@ class MainWindow(QMainWindow):
     show_overlay = Signal(bool)
     apply_overlay = Signal()
     open_settings = Signal()
+    settings_saved = Signal()
     logout = Signal()
     test_self = Signal(bool)
 
@@ -929,20 +930,29 @@ class MainWindow(QMainWindow):
         self.history_page = HistoryPage(history)
         self.tutorial = TutorialPage()
         self.contact = ContactPage()
-        self.settings_holder = _TextPage(
-            "设置", "点击下方按钮打开设置面板。")
-        open_btn = QPushButton("打开设置面板")
-        open_btn.setStyleSheet(f"background:{ACCENT};color:#fff;border:0;"
-                               "border-radius:6px;padding:8px;max-width:200px")
-        open_btn.clicked.connect(self.open_settings.emit)
-        self.settings_holder.layout().itemAt(0).widget().layout()\
-            .addWidget(open_btn)
+        # 设置直接嵌入页面（不再弹窗套娃）
+        from settings_window import SettingsDialog
+        self.settings_panel = SettingsDialog(cfg, embedded=True)
+        self.settings_panel.saved.connect(self.settings_saved.emit)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        inner = QWidget()
+        il = QVBoxLayout(inner)
+        il.setContentsMargins(12, 10, 12, 10)
+        card = _card()
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(16, 14, 16, 14)
+        cl.addWidget(self.settings_panel)
+        il.addWidget(card)
+        il.addStretch(1)
+        scroll.setWidget(inner)
 
         self._page_map = {
             "home": self.home, "subtitle": self.subtitle,
             "test": self.test_page, "history": self.history_page,
             "tutorial": self.tutorial,
-            "settings": self.settings_holder, "contact": self.contact,
+            "settings": scroll, "contact": self.contact,
         }
         if not self._direct:
             self.ref_page = ReferralPage(api)
@@ -980,16 +990,16 @@ class MainWindow(QMainWindow):
                 border-bottom:1px solid {BORDER}; }}
             #tb_min, #tb_close {{ background:transparent; border:0;
                 color:{MUT}; font-size:14px; border-radius:5px; }}
-            #tb_min:hover {{ background:#333947; color:{TEXT}; }}
+            #tb_min:hover {{ background:#eef0f3; color:{TEXT}; }}
             #tb_close:hover {{ background:{DANGER}; color:#fff; }}
             #sidebar {{ background:{PANEL}; border-right:1px solid {BORDER};
                 border-bottom-left-radius:12px; }}
             #nav {{ text-align:center; padding:9px 2px; border:0;
                 border-radius:8px; color:{MUT}; font-size:12px; }}
-            #nav:hover {{ background:#262b36; color:{TEXT}; }}
-            #nav:checked {{ background:#3a2028; color:{ACCENT}; }}
-            #banner {{ background:#3a3220; color:#e8c46a; padding:8px 14px;
-                border-bottom:1px solid #554726; }}
+            #nav:hover {{ background:#f0f1f4; color:{TEXT}; }}
+            #nav:checked {{ background:#ffe9eb; color:{ACCENT}; }}
+            #banner {{ background:#fff6e5; color:#9a7b2d; padding:8px 14px;
+                border-bottom:1px solid #f0e3c0; }}
         """)
         self.switch(0)
 

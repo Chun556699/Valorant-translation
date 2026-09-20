@@ -20,12 +20,18 @@ class SettingsDialog(QDialog):
     _captured = Signal(dict)         # 录入线程 -> UI 线程
     _test_result = Signal(str, bool) # 测试线程 -> UI 线程
 
-    def __init__(self, cfg, parent=None):
+    def __init__(self, cfg, parent=None, embedded=False):
         super().__init__(parent)
         self.cfg = cfg
-        self.setWindowTitle("VTranslate 设置")
-        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
-        self.setMinimumWidth(420)
+        self._embedded = embedded
+        if embedded:
+            # 嵌入主窗作为页面：去掉对话框属性/置顶/取消按钮
+            self.setWindowFlags(Qt.Widget)
+        else:
+            self.setWindowTitle("VTranslate 设置")
+            self.setWindowFlags(
+                self.windowFlags() | Qt.WindowStaysOnTopHint)
+            self.setMinimumWidth(420)
         self._recorder = None
         self._captured.connect(self._hotkey_captured)
         self._test_result.connect(self._on_test_result)
@@ -156,11 +162,17 @@ class SettingsDialog(QDialog):
         btns = QHBoxLayout()
         save = QPushButton("保存")
         save.clicked.connect(self._save)
-        cancel = QPushButton("取消")
-        cancel.clicked.connect(self.reject)
         btns.addStretch(1)
         btns.addWidget(save)
-        btns.addWidget(cancel)
+        if not embedded:
+            cancel = QPushButton("取消")
+            cancel.clicked.connect(self.reject)
+            btns.addWidget(cancel)
+        else:
+            self.save_tip = QLabel("")
+            self.save_tip.setStyleSheet("color:#46c27e")
+            btns.addWidget(self.save_tip)
+            btns.addStretch(1)
         lay.addLayout(btns)
 
     @staticmethod
@@ -284,7 +296,10 @@ class SettingsDialog(QDialog):
         c["click_through"] = self.through.isChecked()
         c.save()
         self.saved.emit()
-        self.accept()
+        if self._embedded:
+            self.save_tip.setText("已保存 ✓")
+        else:
+            self.accept()
 
     def reject(self):
         if self._recorder:

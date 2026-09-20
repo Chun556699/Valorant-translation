@@ -143,6 +143,9 @@ class App:
         self.win.show_overlay.connect(lambda _: self.overlay.show())
         self.win.apply_overlay.connect(self._apply_overlay_cfg)
         self.win.open_settings.connect(self.show_settings)
+        self.win.settings_saved.connect(self._on_settings_saved)
+        self.win.settings_panel.hotkey_recording.connect(
+            lambda _: self._start_hotkey())
         self.win.logout.connect(self._logout)
 
         if self.meta.get("announcement"):
@@ -355,6 +358,9 @@ class App:
             log.warning("[%s] %s: %s", stream, ev.get("code"), ev.get("msg"))
             if ev.get("code") == "insufficient_balance":
                 self.bridge.status.emit("额度不足，请到购买中心充值")
+            elif ev.get("msg"):
+                self.bridge.status.emit(
+                    f"[{ '队友' if stream=='mate' else '自翻'}] {ev['msg'][:80]}")
         elif t == "closed":
             self._update_status()
 
@@ -454,19 +460,21 @@ class App:
         self.overlay._on_pin_toggle(self.cfg["click_through"])
 
     def show_settings(self):
-        dlg = SettingsDialog(self.cfg, self.win)
-        dlg.hotkey_recording.connect(lambda _: self._start_hotkey())
-        if dlg.exec():
-            self._apply_overlay_cfg()
-            self._start_hotkey()
-            self.win.home.refresh_chips()
-            # 模式/Key/音色变化需重建会话；模式切换提示重启更稳妥
-            if self.cfg["mode"] == "direct" != self._direct:
-                QMessageBox.information(
-                    self.win, "模式已切换", "运行模式已更改，请重启客户端生效。")
-            elif self.running:
-                self.set_running(False)
-                self.set_running(True)
+        """设置已内嵌在主窗导航页——直接弹出主窗并切过去。"""
+        self._raise_main()
+        self.win.switch_to("settings")
+
+    def _on_settings_saved(self):
+        self._apply_overlay_cfg()
+        self._start_hotkey()
+        self.win.home.refresh_chips()
+        # 模式/Key/音色变化需重建会话；模式切换提示重启更稳妥
+        if self.cfg["mode"] == "direct" != self._direct:
+            QMessageBox.information(
+                self.win, "模式已切换", "运行模式已更改，请重启客户端生效。")
+        elif self.running:
+            self.set_running(False)
+            self.set_running(True)
 
     def _update_status(self):
         mate = "队友✓" if self._mate_on and self._state["mate"] == "ready" else \

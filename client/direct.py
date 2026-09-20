@@ -20,6 +20,10 @@ DEFAULT_WS_URL = ("wss://llm-5gwthr14damb7ihz.cn-beijing.maas.aliyuncs.com"
 DEFAULT_MODEL = "qwen3.8-livetranslate-flash-realtime"
 
 
+class _RetryNoPhrases(Exception):
+    """握手因热词参数被拒时触发，外层捕获后不带 phrases 立即重连。"""
+
+
 def _deep_find_speaker(obj):
     keys = ("speaker", "speaker_id", "speaker_label", "speaker_idx",
             "spk", "spk_id")
@@ -117,6 +121,7 @@ class DashScopeDirect:
 
     async def _run(self):
         backoff = 1
+        phrases = self.phrases          # 握手失败时降级为不带热词重试
         while not self._stop.is_set():
             self.on_state("connecting")
             try:
@@ -129,7 +134,7 @@ class DashScopeDirect:
                     await ws.send(json.dumps(
                         _session_config(self.target, self.voice,
                                         self.want_audio, self.stream,
-                                        self.phrases)))
+                                        phrases)))
                     # 等 session.updated
                     async for raw in ws:
                         ev = json.loads(raw)
@@ -137,7 +142,14 @@ class DashScopeDirect:
                         if t == "session.updated":
                             break
                         if t == "error" or ev.get("code"):
-                            raise RuntimeError(json.dumps(ev, ensure_ascii=False))
+                            if phrases:
+                                # 可能 corpus.phrases 不被支持：弃用热词立即重连
+                                log.warning("[%s] session.update 被拒，"
+                                            "尝试不带热词: %s", self.stream, ev)
+                                self._phrases_failed = True
+                                raise _RetryNoPhrases(str(ev)[:200])
+                            raise RuntimeError(
+                                json.dumps(ev, ensure_ascii=False))
                     self.ready.set()
                     self.on_state("ready")
                     self.on_event({"type": "ready", "stream": self.stream})
@@ -150,6 +162,11 @@ class DashScopeDirect:
                         except ValueError:
                             continue
                         self._handle_event(ev)
+            except _RetryNoPhrases as e:
+                phrases = None
+                self.on_event({"type": "error", "code": "phrases_fallback",
+                               "msg": f"热词不被支持，已降级: {e}"})
+                continue
             except Exception as e:
                 log.info("[%s] 直连断开: %s", self.stream, e)
                 self.on_event({"type": "error", "code": "upstream",
