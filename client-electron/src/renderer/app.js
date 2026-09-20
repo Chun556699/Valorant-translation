@@ -43,6 +43,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   api.on('rt-ev', onRtEv);
   api.on('tts', onTts);
   api.on('ovctl', onOverlayCtl);
+  api.on('hotkey-invalid', () =>
+    toast('热键未识别，请到设置页重新录入'));
   setStatus('就绪');
   refreshChips();
 });
@@ -96,8 +98,11 @@ function initHome() {
 
 function refreshChips() {
   const hk = cfg().hotkey || {};
+  const LEG = { x1: 'X1', x2: 'X2', middle: '中键' };
   const dev = hk.device === 'mouse' ? '鼠标' : '键盘';
-  const kn = hk.device === 'mouse' ? ({ 3: '中键', 4: 'X1', 5: 'X2' }[hk.key] || hk.key) : `键${hk.key}`;
+  const kn = hk.device === 'mouse'
+    ? ({ 3: '中键', 4: 'X1', 5: 'X2' }[hk.key] || LEG[hk.key] || hk.key)
+    : hk.key;
   $('homeChips').textContent =
     `队友→${cfg().target_mate} · 按住${dev}${kn}自翻→${cfg().target_self} · ${cfg().play_audio ? '播报译文' : '仅文本'}`;
 }
@@ -402,8 +407,11 @@ function syncModeRows() {
 
 function syncHkLabel() {
   const hk = cfg().hotkey || {};
+  const LEG = { x1: 'X1', x2: 'X2', middle: '中键' };
   const dev = hk.device === 'mouse' ? '鼠标' : '键盘';
-  const kn = hk.device === 'mouse' ? ({ 3: '中键', 4: 'X1', 5: 'X2' }[hk.key] || hk.key) : `键${hk.key}`;
+  const kn = hk.device === 'mouse'
+    ? ({ 3: '中键', 4: 'X1', 5: 'X2' }[hk.key] || LEG[hk.key] || hk.key)
+    : hk.key;
   $('hkLabel').textContent = `${dev} ${kn}`;
 }
 function onHotkeyCaptured(spec) {

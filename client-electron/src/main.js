@@ -81,11 +81,40 @@ function createTray() {
 }
 
 /* ---------- 全局 PTT（uiohook：键盘 + 鼠标侧键） ---------- */
+const LEGACY_MOUSE = { x1: '4', x2: '5', middle: '3', left: '1', right: '2' };
+function normalizeHotkey(hk) {
+  /* 兼容 Python 版配置：pynput 名字 -> uiohook 码 */
+  if (!hk || !hk.device) return null;
+  let key = String(hk.key || '');
+  if (hk.device === 'mouse') {
+    if (LEGACY_MOUSE[key]) key = LEGACY_MOUSE[key];   // "x1"->"4"
+    return { device: 'mouse', key };
+  }
+  if (hk.device === 'keyboard') {
+    if (/^\d+$/.test(key)) return { device: 'keyboard', key };
+    // pynput 名字 -> UiohookKey 常量（f9->F9, caps_lock->CapsLock, a->A）
+    const name = key.replace(/_([a-z])/g, (_, c) => c.toUpperCase())
+                    .replace(/^./, c => c.toUpperCase());
+    const code = UiohookKey && UiohookKey[name];
+    if (code !== undefined) return { device: 'keyboard', key: String(code) };
+    return null;   // 认不出 → 让 UI 提示重录
+  }
+  return null;
+}
+
 function startHook() {
   try {
     const mod = require('uiohook-napi');
     uIOhook = mod.uIOhook; UiohookKey = mod.UiohookKey;
-    const keyOf = () => (readCfg().hotkey || {});
+    let hkBadWarned = false;
+    const keyOf = () => {
+      const hk = normalizeHotkey(readCfg().hotkey);
+      if (!hk && !hkBadWarned) {
+        hkBadWarned = true;
+        send('hotkey-invalid');
+      }
+      return hk || {};
+    };
 
     uIOhook.on('keydown', (e) => {
       if (recordingHotkey) {
@@ -218,6 +247,10 @@ ipcMain.handle('session:test', async (_e, cfg) => {
 
 app.whenReady().then(() => {
   app.setAppUserModelId('chunfff.VTranslate');
+
+  // 麦克风/系统音频权限：默认全放行（本地自用工具）
+  session.defaultSession.setPermissionRequestHandler((_w, _p, cb) => cb(true));
+  session.defaultSession.setPermissionCheckHandler(() => true);
 
   // 系统音频回环：getDisplayMedia 的 audio='loopback'（Windows 支持）
   session.defaultSession.setDisplayMediaRequestHandler((req, cb) => {
