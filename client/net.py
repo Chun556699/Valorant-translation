@@ -21,8 +21,26 @@ class Api:
     def _h(self):
         return {"Authorization": f"Bearer {self.token}"}
 
-    def register(self, device_id: str) -> dict:
-        r = self._cli.post(f"{self.base}/api/register", json={"device_id": device_id})
+    # ---- 认证 ----
+    def auth_register(self, username, password, ref="", device_id="") -> dict:
+        r = self._cli.post(f"{self.base}/api/auth/register", json={
+            "username": username, "password": password,
+            "ref": ref, "device_id": device_id})
+        return r.json()
+
+    def auth_login(self, username, password) -> dict:
+        r = self._cli.post(f"{self.base}/api/auth/login",
+                           json={"username": username, "password": password})
+        return r.json()
+
+    def auth_guest(self, device_id: str) -> dict:
+        r = self._cli.post(f"{self.base}/api/auth/guest",
+                           json={"device_id": device_id})
+        return r.json()
+
+    # ---- 信息 ----
+    def meta(self) -> dict:
+        r = self._cli.get(f"{self.base}/api/meta")
         return r.json()
 
     def me(self) -> dict:
@@ -33,6 +51,11 @@ class Api:
         r = self._cli.get(f"{self.base}/api/products")
         return r.json()
 
+    def ref_stats(self) -> dict:
+        r = self._cli.get(f"{self.base}/api/referral/stats", headers=self._h())
+        return r.json()
+
+    # ---- 支付 ----
     def pay_create(self, product_code: str, pay_type: str) -> dict:
         r = self._cli.post(f"{self.base}/api/pay/create",
                            json={"product_code": product_code, "pay_type": pay_type},
@@ -49,22 +72,22 @@ class Api:
 class RelayClient:
     """一条到计费服务器的翻译流连接。后台 asyncio 线程内运行。
 
-    用法:
-        rc = RelayClient(ws_base, token, "mate", "zh", on_event=cb)
-        rc.start()            # 起线程+连接，自动重连
-        rc.send_audio(pcm)    # 线程安全
-        rc.stop()
+    on_event(dict): seg / usage / error / closed / ready
+    on_audio(bytes): 译文 TTS PCM(24k mono s16le)，仅 want_audio=True 时有
     """
 
     def __init__(self, http_base: str, token: str, stream: str, target: str,
-                 on_event, on_state=None):
+                 on_event, on_state=None, voice: str = "", want_audio=False,
+                 on_audio=None):
         ws_scheme = "wss" if http_base.startswith("https") else "ws"
         base = http_base.split("://", 1)[-1].rstrip("/")
         self.url = (f"{ws_scheme}://{base}/ws/translate"
-                    f"?token={token}&stream={stream}&target={target}")
+                    f"?token={token}&stream={stream}&target={target}"
+                    f"&voice={voice}&audio={1 if want_audio else 0}")
         self.stream = stream
         self.on_event = on_event          # fn(dict) 收到下行消息（非UI线程！）
-        self.on_state = on_state or (lambda s: None)   # "connecting"/"ready"/"closed"
+        self.on_state = on_state or (lambda s: None)
+        self.on_audio = on_audio          # fn(bytes)
         self._loop: asyncio.AbstractEventLoop | None = None
         self._ws = None
         self._thread = None
@@ -73,6 +96,8 @@ class RelayClient:
 
     # ---- 生命周期 ----
     def start(self):
+        if self._thread and self._thread.is_alive():
+            return
         self._stop.clear()
         self._thread = threading.Thread(target=self._thread_main, daemon=True,
                                         name=f"relay-{self.stream}")
@@ -113,6 +138,12 @@ class RelayClient:
                             self.on_state("ready")
                         elif t == "closed":
                             self.on_state("closed")
+                        elif t == "audio" and self.on_audio:
+                            try:
+                                self.on_audio(base64.b64decode(ev["pcm"]))
+                            except Exception:
+                                pass
+                            continue
                         self.on_event(ev)
             except Exception as e:
                 log.info("[%s] ws 断开: %s", self.stream, e)

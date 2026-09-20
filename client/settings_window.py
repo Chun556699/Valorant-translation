@@ -68,11 +68,25 @@ class SettingsDialog(QDialog):
         self.lb_combo.addItem("默认扬声器回环", None)
         for idx, name in audio.list_loopback_devices(pa):
             self.lb_combo.addItem(name, idx)
+        self.out_combo = QComboBox()
+        self.out_combo.addItem("默认扬声器", None)
+        for idx, name in audio.list_output_devices(pa):
+            self.out_combo.addItem(name, idx)
         pa.terminate()
         self._select_device(self.mic_combo, cfg["mic_device"])
         self._select_device(self.lb_combo, cfg["loopback_device"])
+        self._select_device(self.out_combo, cfg["output_device"])
         form.addRow("麦克风", self.mic_combo)
         form.addRow("回环设备", self.lb_combo)
+        form.addRow("播报输出设备", self.out_combo)
+
+        # ---- 播报与复制 ----
+        self.play_audio = QCheckBox("播放译文声音（TTS 播报）")
+        self.play_audio.setChecked(bool(cfg["play_audio"]))
+        form.addRow("", self.play_audio)
+        self.auto_copy = QCheckBox("译文定稿后自动复制到剪贴板")
+        self.auto_copy.setChecked(bool(cfg["auto_copy"]))
+        form.addRow("", self.auto_copy)
 
         # ---- 悬浮窗 ----
         op_row = QHBoxLayout()
@@ -135,6 +149,9 @@ class SettingsDialog(QDialog):
         c["target_self"] = self.self_target.currentData()
         c["mic_device"] = self.mic_combo.currentData()
         c["loopback_device"] = self.lb_combo.currentData()
+        c["output_device"] = self.out_combo.currentData()
+        c["play_audio"] = self.play_audio.isChecked()
+        c["auto_copy"] = self.auto_copy.isChecked()
         c["overlay_opacity"] = self.opacity.value() / 100.0
         c["max_bubbles"] = self.max_lines.value()
         c["click_through"] = self.through.isChecked()

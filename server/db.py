@@ -1,4 +1,4 @@
-"""SQLite 存储层：用户/订单/用量。低并发，单连接 + 锁足够。"""
+"""SQLite 存储层：账号/订单/用量/推广。低并发，单连接 + 锁足够。"""
 import sqlite3
 import threading
 import time
@@ -7,10 +7,18 @@ import secrets
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    device_id TEXT UNIQUE NOT NULL,
+    username TEXT UNIQUE,             -- NULL=游客账号
+    password_hash TEXT,
+    device_id TEXT,
     token TEXT UNIQUE NOT NULL,
-    credit_seconds INTEGER NOT NULL DEFAULT 0,
+    money_cents INTEGER NOT NULL DEFAULT 0,      -- 余额（分）
+    credit_seconds INTEGER NOT NULL DEFAULT 0,   -- 时长卡/点数（秒）
+    trial_seconds INTEGER NOT NULL DEFAULT 0,    -- 免费额度剩余（秒）
+    trial_expire_at INTEGER NOT NULL DEFAULT 0,
     sub_expire_at INTEGER NOT NULL DEFAULT 0,
+    ref_code TEXT UNIQUE,             -- 推广码
+    referred_by INTEGER,              -- 邀请人 user_id
+    ref_earned_fen INTEGER NOT NULL DEFAULT 0,   -- 累计返利（分）
     created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS orders (
@@ -30,6 +38,8 @@ CREATE TABLE IF NOT EXISTS usage_logs (
     user_id INTEGER NOT NULL,
     stream TEXT NOT NULL,
     seconds INTEGER NOT NULL,
+    pool TEXT NOT NULL,               -- trial/card/money/free
+    fen INTEGER NOT NULL DEFAULT 0,   -- 走余额时扣的分
     created_at INTEGER NOT NULL
 );
 """
@@ -55,41 +65,98 @@ class DB:
             self._conn.execute(sql, args)
             self._conn.commit()
 
-    # ---------- 用户 ----------
-    def get_or_create_user(self, device_id: str, trial_seconds: int = 0) -> dict:
-        row = self._q("SELECT * FROM users WHERE device_id=?", (device_id,), one=True)
+    # ---------- 账号 ----------
+    def create_account(self, username: str, password_hash: str,
+                       trial_seconds: int, trial_days: int,
+                       ref_code: str | None = None,
+                       referred_by: int | None = None,
+                       device_id: str | None = None) -> dict | None:
+        token = secrets.token_hex(24)
+        rc = ref_code or secrets.token_hex(4)
+        now = int(time.time())
+        trial_exp = now + trial_days * 86400 if trial_seconds > 0 else 0
+        try:
+            self._x(
+                "INSERT INTO users(username,password_hash,device_id,token,"
+                "trial_seconds,trial_expire_at,ref_code,referred_by,created_at)"
+                " VALUES(?,?,?,?,?,?,?,?,?)",
+                (username, password_hash, device_id, token,
+                 trial_seconds, trial_exp, rc, referred_by, now),
+            )
+        except sqlite3.IntegrityError:
+            return None
+        return dict(self._q("SELECT * FROM users WHERE username=?",
+                            (username,), one=True))
+
+    def create_guest(self, device_id: str, trial_seconds: int,
+                     trial_days: int) -> dict:
+        row = self._q("SELECT * FROM users WHERE device_id=? AND username IS NULL",
+                      (device_id,), one=True)
         if row:
             return dict(row)
         token = secrets.token_hex(24)
         now = int(time.time())
+        trial_exp = now + trial_days * 86400 if trial_seconds > 0 else 0
         self._x(
-            "INSERT INTO users(device_id, token, credit_seconds, sub_expire_at, created_at)"
-            " VALUES(?,?,?,?,?)",
-            (device_id, token, trial_seconds, 0, now),
+            "INSERT INTO users(device_id,token,trial_seconds,trial_expire_at,"
+            "ref_code,created_at) VALUES(?,?,?,?,?,?)",
+            (device_id, token, trial_seconds, trial_exp,
+             secrets.token_hex(4), now),
         )
-        return dict(self._q("SELECT * FROM users WHERE device_id=?", (device_id,), one=True))
+        return dict(self._q("SELECT * FROM users WHERE token=?", (token,), one=True))
+
+    def user_by_username(self, username: str):
+        row = self._q("SELECT * FROM users WHERE username=?", (username,), one=True)
+        return dict(row) if row else None
 
     def user_by_token(self, token: str):
         row = self._q("SELECT * FROM users WHERE token=?", (token,), one=True)
         return dict(row) if row else None
 
+    def user_by_ref_code(self, ref_code: str):
+        row = self._q("SELECT * FROM users WHERE ref_code=?", (ref_code,), one=True)
+        return dict(row) if row else None
+
+    def user_by_id(self, uid: int):
+        row = self._q("SELECT * FROM users WHERE id=?", (uid,), one=True)
+        return dict(row) if row else None
+
+    # ---------- 权益池 ----------
+    def sub_active(self, user: dict) -> bool:
+        return user.get("sub_expire_at", 0) > int(time.time())
+
+    def trial_active(self, user: dict) -> bool:
+        return (user.get("trial_seconds", 0) > 0
+                and user.get("trial_expire_at", 0) > int(time.time()))
+
+    def add_money(self, user_id: int, fen: int):
+        self._x("UPDATE users SET money_cents = MAX(0, money_cents + ?) WHERE id=?",
+                (fen, user_id))
+
     def add_credits(self, user_id: int, seconds: int):
-        self._x(
-            "UPDATE users SET credit_seconds = MAX(0, credit_seconds + ?) WHERE id=?",
-            (seconds, user_id),
-        )
+        self._x("UPDATE users SET credit_seconds = MAX(0, credit_seconds + ?) WHERE id=?",
+                (seconds, user_id))
+
+    def add_trial(self, user_id: int, seconds: int):
+        self._x("UPDATE users SET trial_seconds = MAX(0, trial_seconds + ?) WHERE id=?",
+                (seconds, user_id))
 
     def extend_sub(self, user_id: int, days: int):
         now = int(time.time())
-        user = self._q("SELECT sub_expire_at FROM users WHERE id=?", (user_id,), one=True)
+        user = self.user_by_id(user_id)
         base = max(now, user["sub_expire_at"] if user else 0)
-        self._x(
-            "UPDATE users SET sub_expire_at=? WHERE id=?",
-            (base + days * 86400, user_id),
-        )
+        self._x("UPDATE users SET sub_expire_at=? WHERE id=?",
+                (base + days * 86400, user_id))
 
-    def sub_active(self, user: dict) -> bool:
-        return user.get("sub_expire_at", 0) > int(time.time())
+    def add_ref_earning(self, user_id: int, fen: int):
+        self._x("UPDATE users SET ref_earned_fen = ref_earned_fen + ? WHERE id=?",
+                (fen, user_id))
+
+    def ref_stats(self, user_id: int) -> dict:
+        invited = self._q(
+            "SELECT COUNT(*) c FROM users WHERE referred_by=?", (user_id,), one=True)["c"]
+        user = self.user_by_id(user_id)
+        return {"invited": invited, "earned_fen": user["ref_earned_fen"]}
 
     # ---------- 订单 ----------
     def create_order(self, out_trade_no, user_id, product_code, name, money, pay_type):
@@ -116,8 +183,10 @@ class DB:
         return self.get_order(out_trade_no) if changed else None
 
     # ---------- 用量 ----------
-    def log_usage(self, user_id: int, stream: str, seconds: int):
+    def log_usage(self, user_id: int, stream: str, seconds: int,
+                  pool: str, fen: int = 0):
         self._x(
-            "INSERT INTO usage_logs(user_id,stream,seconds,created_at) VALUES(?,?,?,?)",
-            (user_id, stream, seconds, int(time.time())),
+            "INSERT INTO usage_logs(user_id,stream,seconds,pool,fen,created_at)"
+            " VALUES(?,?,?,?,?,?)",
+            (user_id, stream, seconds, pool, fen, int(time.time())),
         )

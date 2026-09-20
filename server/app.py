@@ -1,8 +1,10 @@
-"""计费服务器入口：REST(注册/余额/下单/查单/回调) + WS(翻译中转)。
+"""计费服务器入口：REST(认证/余额/下单/查单/回调/推广) + WS(翻译中转)。
 
 运行：uvicorn app:app --host 0.0.0.0 --port 8765
 """
+import hashlib
 import logging
+import secrets
 import time
 import uuid
 from urllib.parse import parse_qsl
@@ -27,31 +29,123 @@ epay = EPayClient(config.ZPAY_BASE_URL, config.ZPAY_PID, config.ZPAY_KEY)
 http = httpx.AsyncClient()
 
 
-# ---------------- 鉴权 ----------------
+# ---------------- 工具 ----------------
+def _hash_pwd(password: str, salt: str | None = None) -> str:
+    salt = salt or secrets.token_hex(8)
+    h = hashlib.pbkdf2_hmac("sha256", password.encode(),
+                            bytes.fromhex(salt), 100_000).hex()
+    return f"{salt}${h}"
+
+
+def _check_pwd(password: str, stored: str) -> bool:
+    try:
+        salt, _ = stored.split("$", 1)
+        return _hash_pwd(password, salt) == stored
+    except Exception:
+        return False
+
+
 def _auth(req: Request):
     token = req.headers.get("Authorization", "").removeprefix("Bearer ").strip()
     return db.user_by_token(token) if token else None
 
 
 def _entitlement(user: dict) -> dict:
+    price = config.PRICE_FEN_PER_MINUTE
+    money_min = user["money_cents"] / price if price > 0 else 0
     return {
+        "username": user.get("username") or "游客",
+        "ref_code": user.get("ref_code", ""),
+        "money_cents": user["money_cents"],
+        "money_yuan": f"{user['money_cents']/100:.2f}",
+        "money_minutes": int(money_min),
         "credit_seconds": user["credit_seconds"],
+        "credit_minutes": user["credit_seconds"] // 60,
+        "trial_seconds": user["trial_seconds"],
+        "trial_expire_at": user["trial_expire_at"],
+        "trial_active": db.trial_active(user),
         "sub_expire_at": user["sub_expire_at"],
         "sub_active": db.sub_active(user),
+        "price_fen_per_minute": price,
     }
 
 
-# ---------------- 账号 ----------------
+# ---------------- 元信息 ----------------
+@app.get("/api/meta")
+def meta():
+    return {"code": 1, "announcement": config.ANNOUNCEMENT,
+            "price_fen_per_minute": config.PRICE_FEN_PER_MINUTE,
+            "voices": config.VOICES,
+            "trial_seconds": config.TRIAL_SECONDS}
+
+
+# ---------------- 认证 ----------------
 class RegisterReq(BaseModel):
+    username: str
+    password: str
+    ref: str = ""          # 推广码（可选）
+    device_id: str = ""
+
+
+@app.post("/api/auth/register")
+def register(req: RegisterReq):
+    username = req.username.strip()
+    if not (3 <= len(username) <= 32):
+        return JSONResponse({"code": 0, "msg": "用户名需 3-32 位"}, status_code=400)
+    if len(req.password) < 6:
+        return JSONResponse({"code": 0, "msg": "密码至少 6 位"}, status_code=400)
+    if db.user_by_username(username):
+        return JSONResponse({"code": 0, "msg": "用户名已存在"}, status_code=400)
+
+    referred_by = None
+    if req.ref:
+        referrer = db.user_by_ref_code(req.ref.strip())
+        if referrer:
+            referred_by = referrer["id"]
+
+    user = db.create_account(username, _hash_pwd(req.password),
+                             config.TRIAL_SECONDS, config.TRIAL_DAYS,
+                             referred_by=referred_by,
+                             device_id=req.device_id or None)
+    if not user:
+        return JSONResponse({"code": 0, "msg": "注册失败"}, status_code=500)
+    return {"code": 1, "token": user["token"], **_entitlement(user)}
+
+
+class LoginReq(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/api/auth/login")
+def login(req: LoginReq):
+    user = db.user_by_username(req.username.strip())
+    if not user or not user.get("password_hash") \
+            or not _check_pwd(req.password, user["password_hash"]):
+        return JSONResponse({"code": 0, "msg": "用户名或密码错误"}, status_code=401)
+    # 每次登录换新 token
+    db._x("UPDATE users SET token=? WHERE id=?", (secrets.token_hex(24), user["id"]))
+    user = db.user_by_id(user["id"])
+    return {"code": 1, "token": user["token"], **_entitlement(user)}
+
+
+class GuestReq(BaseModel):
     device_id: str
 
 
-@app.post("/api/register")
-def register(req: RegisterReq):
+@app.post("/api/auth/guest")
+def guest(req: GuestReq):
+    """游客模式：设备码自动注册，保留向后兼容。"""
     if not req.device_id or len(req.device_id) > 64:
         return JSONResponse({"code": 0, "msg": "device_id 非法"}, status_code=400)
-    user = db.get_or_create_user(req.device_id, config.TRIAL_SECONDS)
+    user = db.create_guest(req.device_id, config.TRIAL_SECONDS, config.TRIAL_DAYS)
     return {"code": 1, "token": user["token"], **_entitlement(user)}
+
+
+# 兼容老客户端的注册入口
+@app.post("/api/register")
+def register_legacy(req: GuestReq):
+    return guest(req)
 
 
 @app.get("/api/me")
@@ -62,16 +156,29 @@ def me(req: Request):
     return {"code": 1, **_entitlement(user)}
 
 
+@app.get("/api/referral/stats")
+def ref_stats(req: Request):
+    user = _auth(req)
+    if not user:
+        return JSONResponse({"code": 0, "msg": "未授权"}, status_code=401)
+    s = db.ref_stats(user["id"])
+    return {"code": 1, "ref_code": user["ref_code"],
+            "invited": s["invited"],
+            "earned_fen": s["earned_fen"],
+            "earned_yuan": f"{s['earned_fen']/100:.2f}",
+            "bonus_percent": config.REF_BONUS_PERCENT}
+
+
+# ---------------- 商品与支付 ----------------
 @app.get("/api/products")
 def products():
     return {"code": 1, "products": [
         {"code": k, "name": v["name"], "money": v["money"], "kind": v["kind"],
-         "seconds": v.get("seconds"), "days": v.get("days")}
+         "fen": v.get("fen"), "seconds": v.get("seconds"), "days": v.get("days")}
         for k, v in config.PRODUCTS.items()
     ]}
 
 
-# ---------------- 支付 ----------------
 class PayCreateReq(BaseModel):
     product_code: str
     pay_type: str = "alipay"   # alipay | wxpay
@@ -118,12 +225,29 @@ async def pay_create(req: PayCreateReq, request: Request):
 
 
 def _fulfill_order(order: dict):
-    """按商品类型发放权益（幂等：仅 pending->paid 时调用一次）。"""
+    """发货 + 推广返利（仅 pending->paid 时调用一次）。"""
     product = config.PRODUCTS.get(order["product_code"], {})
-    if product.get("kind") == "credits":
+    kind = product.get("kind")
+    if kind == "money":
+        db.add_money(order["user_id"], int(product["fen"]))
+    elif kind == "card":
         db.add_credits(order["user_id"], int(product["seconds"]))
-    elif product.get("kind") == "sub":
+    elif kind == "sub":
         db.extend_sub(order["user_id"], int(product["days"]))
+
+    # 返利：按实付金额的 REF_BONUS_PERCENT% 返到邀请人余额
+    user = db.user_by_id(order["user_id"])
+    if user and user.get("referred_by"):
+        try:
+            paid_fen = int(round(float(order["money"]) * 100))
+        except ValueError:
+            paid_fen = 0
+        bonus = paid_fen * config.REF_BONUS_PERCENT // 100
+        if bonus > 0:
+            db.add_money(user["referred_by"], bonus)
+            db.add_ref_earning(user["referred_by"], bonus)
+            log.info("返利 %d 分给邀请人 #%s (订单 %s)",
+                     bonus, user["referred_by"], order["out_trade_no"])
 
 
 @app.api_route("/api/pay/notify", methods=["GET", "POST"])
@@ -184,10 +308,12 @@ async def pay_status(out_trade_no: str, request: Request):
     return {"code": 1, "status": order["status"], **_entitlement(fresh)}
 
 
-# ---------------- 管理（手动加时长/订阅，调试用） ----------------
+# ---------------- 管理（手动发放，调试用） ----------------
 class GrantReq(BaseModel):
-    device_id: str
-    seconds: int = 0
+    username: str = ""
+    device_id: str = ""
+    seconds: int = 0        # 时长卡秒数
+    fen: int = 0            # 余额分
     sub_days: int = 0
 
 
@@ -195,18 +321,23 @@ class GrantReq(BaseModel):
 def admin_grant(req: GrantReq, request: Request):
     if not config.ADMIN_TOKEN or request.headers.get("X-Admin-Token") != config.ADMIN_TOKEN:
         return JSONResponse({"code": 0, "msg": "forbidden"}, status_code=403)
-    user = db.get_or_create_user(req.device_id)
+    user = (db.user_by_username(req.username) if req.username
+            else db.create_guest(req.device_id or uuid.uuid4().hex, 0, 0))
+    if not user:
+        return JSONResponse({"code": 0, "msg": "用户不存在"}, status_code=404)
     if req.seconds:
         db.add_credits(user["id"], req.seconds)
+    if req.fen:
+        db.add_money(user["id"], req.fen)
     if req.sub_days:
         db.extend_sub(user["id"], req.sub_days)
-    return {"code": 1, **_entitlement(db.get_or_create_user(req.device_id))}
+    return {"code": 1, **_entitlement(db.user_by_id(user["id"]))}
 
 
 # ---------------- 翻译中转 WS ----------------
 @app.websocket("/ws/translate")
 async def ws_translate(ws: WebSocket, token: str = "", stream: str = "mate",
-                       target: str = "zh"):
+                       target: str = "zh", voice: str = "", audio: int = 0):
     await ws.accept()
     user = db.user_by_token(token)
     if not user:
@@ -217,7 +348,10 @@ async def ws_translate(ws: WebSocket, token: str = "", stream: str = "mate",
         stream = "mate"
     if target not in ("zh", "en", "ja", "ko", "ru", "fr", "de", "es", "pt"):
         target = "zh"
-    session = RelaySession(ws, user, stream, target, db)
+    if voice not in config.VOICES:
+        voice = config.VOICES[0] if config.VOICES else "Cherry"
+    session = RelaySession(ws, user, stream, target, db,
+                           voice=voice, want_audio=bool(audio))
     try:
         await session.run()
     except WebSocketDisconnect:

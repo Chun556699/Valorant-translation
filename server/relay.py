@@ -49,11 +49,12 @@ def _deep_find_speaker(obj) -> str | None:
     return None
 
 
-def _session_config(stream: str, target: str) -> dict:
+def _session_config(stream: str, target: str, voice: str,
+                    want_audio: bool) -> dict:
     """构造 session.update。3.8 用 audio.input.turn_detection=speaker_detection；
     self(按住说话) 流同样用 speaker_detection，松开时客户端补静音触发断句。"""
     session = {
-        "output_modalities": ["text"],
+        "output_modalities": ["text", "audio"] if want_audio else ["text"],
         "audio": {
             "input": {
                 "format": {"type": "pcm", "sample_rate": 16000},
@@ -63,7 +64,8 @@ def _session_config(stream: str, target: str) -> dict:
                     "silence_duration_ms": 1000,
                 },
             },
-            "output": {"format": {"type": "pcm", "sample_rate": 24000}},
+            "output": {"format": {"type": "pcm", "sample_rate": 24000},
+                       **({"voice": voice} if want_audio and voice else {})},
         },
         "input_audio_transcription": {"model": "qwen3-asr-flash-realtime"},
         "translation": {"language": target},
@@ -73,11 +75,14 @@ def _session_config(stream: str, target: str) -> dict:
 
 
 class RelaySession:
-    def __init__(self, client_ws, user: dict, stream: str, target: str, db):
+    def __init__(self, client_ws, user: dict, stream: str, target: str, db,
+                 voice: str = "", want_audio: bool = False):
         self.ws = client_ws            # starlette WebSocket (已 accept)
         self.user = user
         self.stream = stream           # "mate" | "self"
         self.target = target           # "zh" | "en" ...
+        self.voice = voice
+        self.want_audio = want_audio
         self.db = db
 
         self.upstream = None           # websockets 连接或 None(mock)
@@ -86,7 +91,11 @@ class RelaySession:
         self.billed_total = 0
         self.sub = db.sub_active(user)
         self.user_id = user["id"]
+        # 权益池快照（每次结算时与库同步）
+        self.trial_seconds = user["trial_seconds"]
         self.credit_seconds = user["credit_seconds"]
+        self.money_cents = user["money_cents"]
+        self._money_frac = 0.0         # 余额计费的零碎分累计
 
         # mate 流：用上游 speech_started/stopped 事件计量；self 流按输入量计量
         self._speech_t0: float | None = None
@@ -111,12 +120,59 @@ class RelaySession:
     def _acc(self, seconds: float):
         self.bill_acc += seconds
 
+    def _has_entitlement(self) -> bool:
+        return (self.sub
+                or (self.trial_seconds > 0 and self.user["trial_expire_at"]
+                    > int(time.time()))
+                or self.credit_seconds > 0
+                or self.money_cents > 0)
+
+    def _charge(self, seconds: int) -> str:
+        """按优先级扣费：订阅 > 免费额度 > 时长卡 > 余额。返回使用的池子。"""
+        if self.sub:
+            return "free"
+        s = float(seconds)
+        used = []
+        if self.trial_seconds > 0:
+            t = min(s, self.trial_seconds)
+            self.trial_seconds -= int(round(t))
+            self.db.add_trial(self.user_id, -int(round(t)))
+            used.append(("trial", t, 0))
+            s -= t
+        if s > 0 and self.credit_seconds > 0:
+            t = min(s, float(self.credit_seconds))
+            self.credit_seconds -= int(round(t))
+            self.db.add_credits(self.user_id, -int(round(t)))
+            used.append(("card", t, 0))
+            s -= t
+        if s > 0:
+            # 余额按量：秒 * 单价(分/秒)
+            fen_per_sec = config.PRICE_FEN_PER_MINUTE / 60.0
+            self._money_frac += s * fen_per_sec
+            fen = int(self._money_frac)
+            if fen > 0:
+                self._money_frac -= fen
+                if fen <= self.money_cents:
+                    self.money_cents -= fen
+                    self.db.add_money(self.user_id, -fen)
+                    used.append(("money", s, fen))
+                    s = 0
+                else:
+                    # 余额不足扣满：扣掉能扣的，剩余算欠费（触发断开）
+                    self.db.add_money(self.user_id, -self.money_cents)
+                    used.append(("money", s, self.money_cents))
+                    self.money_cents = 0
+        for pool, secs, fen in used:
+            self.db.log_usage(self.user_id, self.stream, int(round(secs)),
+                              pool, fen)
+        return "+".join(p for p, _, _ in used) or "none"
+
     async def _flush_usage(self, final=False):
-        """把累计时长折算扣点。订阅用户只记账不扣点。"""
+        """把累计时长折算扣费。"""
         if self._flushed:
             return
         if final:
-            self._flushed = True   # 先置位，防止扣点->close() 递归
+            self._flushed = True   # 先置位，防止扣费->close() 递归
             charge = int(self.bill_acc + 0.999) if self.bill_acc > 0 else 0
         else:
             charge = int(self.bill_acc)
@@ -124,30 +180,32 @@ class RelaySession:
             return
         self.bill_acc = max(0.0, self.bill_acc - charge)
         self.billed_total += charge
-        if not self.sub:
-            self.db.add_credits(self.user_id, -charge)
-            self.credit_seconds = max(0, self.credit_seconds - charge)
-        self.db.log_usage(self.user_id, self.stream, charge)
+        self._charge(charge)
         await self._send({
             "type": "usage",
             "used_seconds": self.billed_total,
             "credit_seconds": self.credit_seconds,
+            "trial_seconds": self.trial_seconds,
+            "money_cents": self.money_cents,
             "sub": self.sub,
         })
-        if not self.sub and self.credit_seconds <= 0:
-            await self._err("insufficient_balance", "点数已用完，请充值")
+        if not self._has_entitlement():
+            await self._err("insufficient_balance", "额度已用完，请充值")
             await self.close()
 
     # ---------- 上游 ----------
     async def _connect_upstream(self):
         url = f"{config.DASHSCOPE_WS_URL}?model={config.TRANSLATE_MODEL}"
+        self.user = self.db.user_by_id(self.user_id) or self.user
         self.upstream = await websockets.connect(
             url,
             additional_headers={"Authorization": f"Bearer {config.DASHSCOPE_API_KEY}"},
             ping_interval=20,
             max_size=8 * 1024 * 1024,
         )
-        await self.upstream.send(json.dumps(_session_config(self.stream, self.target)))
+        await self.upstream.send(json.dumps(
+            _session_config(self.stream, self.target, self.voice,
+                            self.want_audio)))
 
     async def _up_send(self, obj: dict):
         if self.upstream:
@@ -155,8 +213,8 @@ class RelaySession:
 
     # ---------- 主循环 ----------
     async def run(self):
-        if not self.sub and self.credit_seconds <= 0:
-            await self._err("insufficient_balance", "无可用点数或订阅")
+        if not self._has_entitlement():
+            await self._err("insufficient_balance", "无可用额度，请充值")
             await self._send({"type": "closed", "reason": "no_balance"})
             return
         try:
@@ -168,7 +226,10 @@ class RelaySession:
             return
 
         await self._send({"type": "ready", "stream": self.stream,
-                          "credit_seconds": self.credit_seconds, "sub": self.sub})
+                          "credit_seconds": self.credit_seconds,
+                          "trial_seconds": self.trial_seconds,
+                          "money_cents": self.money_cents,
+                          "sub": self.sub})
         tasks = [asyncio.create_task(t) for t in (
             self._pump_client_to_up(),
             self._pump_up_to_client(),
@@ -267,6 +328,11 @@ class RelaySession:
                               "src_final": final})
             return
 
+        # --- 译文音频（TTS 播报）---
+        if et == "response.audio.delta" and self.want_audio:
+            await self._send({"type": "audio", "pcm": ev.get("delta", "")})
+            return
+
         # --- 译文 ---
         if et.startswith("response.text.") or et.startswith("response.audio_transcript."):
             speaker = _deep_find_speaker(ev)
@@ -313,6 +379,11 @@ class RelaySession:
                 await self._send({"type": "seg", "speaker": spk,
                                   "src": f"[mock src {i}]", "src_final": True,
                                   "dst": f"[mock dst {i}]", "dst_final": True})
+                if self.want_audio:
+                    # 发 0.3s 静音 PCM(24k) 模拟译文音频
+                    pcm = b"\x00" * int(24000 * 2 * 0.3)
+                    await self._send({"type": "audio",
+                                      "pcm": base64.b64encode(pcm).decode()})
         # 保证循环退出
         return
 

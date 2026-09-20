@@ -51,6 +51,15 @@ def list_loopback_devices(pa: pyaudio.PyAudio):
     return out
 
 
+def list_output_devices(pa: pyaudio.PyAudio):
+    out = []
+    for i in range(pa.get_device_count()):
+        info = pa.get_device_info_by_index(i)
+        if info.get("maxOutputChannels", 0) > 0:
+            out.append((i, info["name"]))
+    return out
+
+
 def default_loopback_index(pa: pyaudio.PyAudio):
     try:
         wasapi = pa.get_host_api_info_by_type(pyaudio.paWASAPI)
