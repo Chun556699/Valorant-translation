@@ -29,13 +29,20 @@ class PCMPlayer:
         self._thread.start()
 
     def _loop(self):
-        try:
-            self._stream = self.pa.open(
-                format=pyaudio.paInt16, channels=1, rate=RATE,
-                output=True, output_device_index=self.device_index,
-                frames_per_buffer=2400)
-        except Exception as e:
-            log.warning("播放设备打开失败: %s", e)
+        # 指定的输出设备失效时退回默认设备（比如耳机拔了/索引过期）
+        for dev in (self.device_index, None):
+            try:
+                self._stream = self.pa.open(
+                    format=pyaudio.paInt16, channels=1, rate=RATE,
+                    output=True, output_device_index=dev,
+                    frames_per_buffer=2400)
+                if dev != self.device_index:
+                    log.warning("指定播报设备打开失败，已回退默认输出")
+                break
+            except Exception as e:
+                log.warning("播放设备打开失败(dev=%s): %s", dev, e)
+        if self._stream is None:
+            log.warning("无可用播放设备，TTS 播报被禁用")
             self._running = False
             return
         while self._running:

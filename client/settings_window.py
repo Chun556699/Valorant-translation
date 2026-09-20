@@ -19,6 +19,7 @@ class SettingsDialog(QDialog):
     hotkey_recording = Signal(str)   # 提示文案
     _captured = Signal(dict)         # 录入线程 -> UI 线程
     _test_result = Signal(str, bool) # 测试线程 -> UI 线程
+    test_audio = Signal()            # 试听播报按钮
 
     def __init__(self, cfg, parent=None, embedded=False):
         super().__init__(parent)
@@ -128,7 +129,13 @@ class SettingsDialog(QDialog):
         # ---- 播报与复制 ----
         self.play_audio = QCheckBox("播放译文声音（TTS 播报）")
         self.play_audio.setChecked(bool(cfg["play_audio"]))
-        form.addRow("", self.play_audio)
+        prow = QHBoxLayout()
+        prow.addWidget(self.play_audio)
+        audition = QPushButton("试听播报")
+        audition.clicked.connect(self.test_audio.emit)
+        prow.addWidget(audition)
+        prow.addStretch(1)
+        form.addRow("", prow)
         self.auto_copy = QCheckBox("译文定稿后自动复制到剪贴板")
         self.auto_copy.setChecked(bool(cfg["auto_copy"]))
         form.addRow("", self.auto_copy)

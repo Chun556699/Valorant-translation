@@ -109,6 +109,7 @@ class RelaySession:
         self._saw_speech_event = False
         self._first_audio_at: float | None = None
         self._appended_seconds = 0.0
+        self._audio_chunks = 0
         self._closed = False
         self._flushed = False
 
@@ -338,8 +339,16 @@ class RelaySession:
             return
 
         # --- 译文音频（TTS 播报）---
-        if et == "response.audio.delta" and self.want_audio:
-            await self._send({"type": "audio", "pcm": ev.get("delta", "")})
+        # 事件名兼容：response.audio.delta / *.output_audio.delta 等，
+        # 排除 audio_transcript（那是文本）
+        if self.want_audio and et.endswith("audio.delta") \
+                and "transcript" not in et:
+            pcm = ev.get("delta", "")
+            if pcm:
+                await self._send({"type": "audio", "pcm": pcm})
+                self._audio_chunks += 1
+                if self._audio_chunks == 1:
+                    log.info("收到首个 TTS 音频帧(%s)", et)
             return
 
         # --- 译文 ---

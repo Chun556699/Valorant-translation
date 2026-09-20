@@ -97,6 +97,8 @@ class DashScopeDirect:
         self._thread = None
         self._stop = threading.Event()
         self.ready = threading.Event()
+        self._audio_chunks = 0
+        self._seen_types: set = set()
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -195,9 +197,15 @@ class DashScopeDirect:
             self.on_event({"type": "error", "code": "upstream",
                            "msg": json.dumps(ev, ensure_ascii=False)[:300]})
             return
-        if et == "response.audio.delta" and self.on_audio:
+        if et.endswith("audio.delta") and "transcript" not in et \
+                and self.on_audio:
             try:
-                self.on_audio(base64.b64decode(ev.get("delta", "")))
+                pcm = base64.b64decode(ev.get("delta", ""))
+                if pcm:
+                    self.on_audio(pcm)
+                    self._audio_chunks += 1
+                    if self._audio_chunks == 1:
+                        log.info("[%s] 收到首个 TTS 音频帧(%s)", self.stream, et)
             except Exception:
                 pass
             return
@@ -236,6 +244,10 @@ class DashScopeDirect:
         spk = _deep_find_speaker(ev)
         if spk:
             self.on_event({"type": "speaker", "speaker": spk, "event": et})
+        # 未识别的事件类型只记一次日志，便于排查字段名差异
+        if et and et not in self._seen_types:
+            self._seen_types.add(et)
+            log.info("[%s] 事件类型: %s", self.stream, et)
 
     # ---- 发送 ----
     def _send(self, obj: dict):

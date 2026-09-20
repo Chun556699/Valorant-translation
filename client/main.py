@@ -146,6 +146,7 @@ class App:
         self.win.settings_saved.connect(self._on_settings_saved)
         self.win.settings_panel.hotkey_recording.connect(
             lambda _: self._start_hotkey())
+        self.win.settings_panel.test_audio.connect(self._test_beep)
         self.win.logout.connect(self._logout)
 
         if self.meta.get("announcement"):
@@ -290,7 +291,7 @@ class App:
                 on_event=lambda ev: self._on_relay_event(stream, ev),
                 on_state=lambda s: self._on_state(stream, s),
                 voice=self.cfg["voice"], want_audio=bool(self.cfg["play_audio"]),
-                on_audio=self.player.play, stream=stream,
+                on_audio=lambda b: self.player.play(b), stream=stream,
                 phrases=valorant_terms.for_target(target))
         return RelayClient(
             self.cfg["server_url"], self.cfg["token"], stream, target,
@@ -298,7 +299,7 @@ class App:
             on_state=lambda s: self._on_state(stream, s),
             voice=self.cfg["voice"],
             want_audio=bool(self.cfg["play_audio"]),
-            on_audio=self.player.play)
+            on_audio=lambda b: self.player.play(b))
 
     def _start_relays(self):
         self.mate_rc = self._new_relay("mate")
@@ -468,6 +469,13 @@ class App:
         self._apply_overlay_cfg()
         self._start_hotkey()
         self.win.home.refresh_chips()
+        # 播报开关/输出设备变更：重建播放器
+        if self.cfg["play_audio"]:
+            self.player.terminate()
+            self.player = PCMPlayer(self.cfg["output_device"])
+            self.player.start()
+        else:
+            self.player.stop()
         # 模式/Key/音色变化需重建会话；模式切换提示重启更稳妥
         if self.cfg["mode"] == "direct" != self._direct:
             QMessageBox.information(
@@ -475,6 +483,17 @@ class App:
         elif self.running:
             self.set_running(False)
             self.set_running(True)
+
+    def _test_beep(self):
+        """设置页「试听播报」：走真实播放链路发一声测试音。"""
+        import numpy as np
+        if not self.player._running:
+            self.player.terminate()
+            self.player = PCMPlayer(self.cfg["output_device"])
+            self.player.start()
+        t = np.linspace(0, 0.5, int(24000 * 0.5), endpoint=False)
+        tone = (np.sin(2 * np.pi * 880 * t) * 0.4 * 32767).astype(np.int16)
+        self.player.play(tone.tobytes())
 
     def _update_status(self):
         mate = "队友✓" if self._mate_on and self._state["mate"] == "ready" else \
