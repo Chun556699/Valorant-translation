@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (QApplication, QSystemTrayIcon, QMenu,
                                QMessageBox, QStyle)
 
 import audio
+import valorant_terms
 from config import Config
 from direct import DashScopeDirect, DEFAULT_WS_URL, DEFAULT_MODEL
 from history import History
@@ -286,7 +287,8 @@ class App:
                 on_event=lambda ev: self._on_relay_event(stream, ev),
                 on_state=lambda s: self._on_state(stream, s),
                 voice=self.cfg["voice"], want_audio=bool(self.cfg["play_audio"]),
-                on_audio=self.player.play, stream=stream)
+                on_audio=self.player.play, stream=stream,
+                phrases=valorant_terms.for_target(target))
         return RelayClient(
             self.cfg["server_url"], self.cfg["token"], stream, target,
             on_event=lambda ev: self._on_relay_event(stream, ev),

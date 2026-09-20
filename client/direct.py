@@ -41,7 +41,7 @@ def _deep_find_speaker(obj):
 
 
 def _session_config(target: str, voice: str, want_audio: bool,
-                    stream: str = "mate") -> dict:
+                    stream: str = "mate", phrases: dict | None = None) -> dict:
     # mate 流连续翻译多说话人 -> speaker_detection；
     # self 流按住说话 -> Manual 模式（turn_detection=null），松开时客户端
     # commit 作为整句提交，否则模型会在中途断句导致"只翻译了第一个分句"
@@ -50,6 +50,9 @@ def _session_config(target: str, voice: str, want_audio: bool,
         "threshold": 0.5,
         "silence_duration_ms": 1000,
     })
+    translation = {"language": target}
+    if phrases:
+        translation["corpus"] = {"phrases": phrases}   # 术语热词
     return {
         "type": "session.update",
         "session": {
@@ -63,7 +66,7 @@ def _session_config(target: str, voice: str, want_audio: bool,
                            **({"voice": voice} if want_audio and voice else {})},
             },
             "input_audio_transcription": {"model": "qwen3-asr-flash-realtime"},
-            "translation": {"language": target},
+            "translation": translation,
         },
     }
 
@@ -74,13 +77,14 @@ class DashScopeDirect:
     def __init__(self, api_key: str, ws_url: str, model: str,
                  target: str, on_event, on_state=None,
                  voice: str = "", want_audio: bool = False, on_audio=None,
-                 stream: str = "mate"):
+                 stream: str = "mate", phrases: dict | None = None):
         self.url = f"{ws_url.rstrip('/')}?model={model}"
         self.api_key = api_key
         self.target = target
         self.voice = voice
         self.want_audio = want_audio
         self.stream = stream
+        self.phrases = phrases or {}
         self.on_event = on_event
         self.on_state = on_state or (lambda s: None)
         self.on_audio = on_audio
@@ -124,7 +128,8 @@ class DashScopeDirect:
                     self._ws = ws
                     await ws.send(json.dumps(
                         _session_config(self.target, self.voice,
-                                        self.want_audio, self.stream)))
+                                        self.want_audio, self.stream,
+                                        self.phrases)))
                     # 等 session.updated
                     async for raw in ws:
                         ev = json.loads(raw)

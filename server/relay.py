@@ -23,6 +23,7 @@ import websockets
 from starlette.websockets import WebSocketState
 
 import config
+import valorant_terms
 
 log = logging.getLogger("relay")
 
@@ -52,12 +53,17 @@ def _deep_find_speaker(obj) -> str | None:
 def _session_config(stream: str, target: str, voice: str,
                     want_audio: bool) -> dict:
     """mate 流 speaker_detection（连续多人语音自动断句+分说话人）；
-    self 流 manual——按住说话松开 commit 整句翻译，防止中途断句。"""
+    self 流 manual——按住说话松开 commit 整句翻译，防止中途断句。
+    corpus.phrases 注入 Valorant 术语热词。"""
     turn = (None if stream == "self" else {
         "type": "speaker_detection",
         "threshold": 0.5,
         "silence_duration_ms": 1000,
     })
+    translation = {"language": target}
+    phrases = valorant_terms.for_target(target)
+    if phrases:
+        translation["corpus"] = {"phrases": phrases}
     session = {
         "output_modalities": ["text", "audio"] if want_audio else ["text"],
         "audio": {
@@ -69,7 +75,7 @@ def _session_config(stream: str, target: str, voice: str,
                        **({"voice": voice} if want_audio and voice else {})},
         },
         "input_audio_transcription": {"model": "qwen3-asr-flash-realtime"},
-        "translation": {"language": target},
+        "translation": translation,
     }
     session.update(config.DASH_SESSION_EXTRA)
     return {"type": "session.update", "session": session}
