@@ -132,7 +132,7 @@ class Overlay(QWidget):
         for w in (self.mate_btn, self.pin_btn, self.fold_btn, close):
             w.setStyleSheet("QPushButton{color:#ddd;background:#3a3a3a;border:0;"
                             "padding:2px 8px;font-size:11px;border-radius:3px}"
-                            "QPushButton:checked{background:#2266aa;color:#fff}")
+                            "QPushButton:checked{background:#ff4655;color:#fff}")
         bl.insertWidget(0, self.status_lbl)
         bl.insertWidget(1, self.ptt_dot)
         bl.insertWidget(2, self.mate_dot)

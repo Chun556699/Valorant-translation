@@ -486,7 +486,7 @@ class App:
         pm.fill(Qt.transparent)
         p = QPainter(pm)
         p.setRenderHint(QPainter.Antialiasing)
-        p.setBrush(QColor("#4f8cff"))
+        p.setBrush(QColor("#ff4655"))
         p.setPen(Qt.NoPen)
         p.drawRoundedRect(4, 4, 56, 56, 14, 14)
         p.setPen(QColor("#ffffff"))

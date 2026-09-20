@@ -28,17 +28,17 @@ CARD = "#20242e"
 BORDER = "#2b303c"
 TEXT = "#e8ebf2"
 MUT = "#98a0b3"
-ACCENT = "#4f8cff"
+ACCENT = "#ff4655"          # Valorant 红
 DANGER = "#e0655f"
 OK = "#46c27e"
 
 APP_QSS = f"""
-    * {{ font-family:'Microsoft YaHei UI'; font-size:13px; }}
+    * {{ font-family:'Microsoft YaHei UI'; font-size:12px; }}
     QWidget {{ background:{BG}; color:{TEXT}; }}
     QDialog, QMessageBox {{ background:{BG}; }}
     QLabel {{ background:transparent; }}
     QPushButton {{ background:#2a2f3a; color:{TEXT}; border:1px solid {BORDER};
-        border-radius:6px; padding:6px 12px; }}
+        border-radius:6px; padding:5px 10px; }}
     QPushButton:hover {{ background:#333947; }}
     QPushButton:checked {{ background:{ACCENT}; color:#fff; border-color:{ACCENT}; }}
     QPushButton:disabled {{ color:#5a6272; }}
@@ -92,39 +92,39 @@ class HomePage(QWidget):
         self.cfg = cfg
         self._running = False
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(18, 14, 18, 14)
-        lay.setSpacing(14)
+        lay.setContentsMargins(12, 10, 12, 10)
+        lay.setSpacing(10)
 
         row = QHBoxLayout()
-        row.setSpacing(14)
+        row.setSpacing(10)
 
         # ---- 翻译控制卡 ----
         card = _card()
         cl = QVBoxLayout(card)
-        cl.setContentsMargins(20, 16, 20, 16)
+        cl.setContentsMargins(14, 10, 14, 10)
         head = QHBoxLayout()
         head.addWidget(QLabel("翻译"))
         head.addStretch(1)
         cl.addLayout(head)
 
         self.chips = QLabel("")
-        self.chips.setStyleSheet(f"color:{ACCENT};background:#222d44;"
+        self.chips.setStyleSheet(f"color:{ACCENT};background:#3a2028;"
                                  "border-radius:9px;padding:4px 10px;"
                                  "font-size:12px")
         self.chips.setMaximumWidth(360)
         cl.addWidget(self.chips)
 
         self.status = QLabel("准备就绪")
-        self.status.setStyleSheet("font-size:22px;font-weight:bold;"
+        self.status.setStyleSheet("font-size:18px;font-weight:bold;"
                                   "padding:10px 0")
         cl.addWidget(self.status)
 
         self.toggle_btn = QPushButton("开始翻译")
-        self.toggle_btn.setMinimumHeight(44)
+        self.toggle_btn.setMinimumHeight(38)
         self.toggle_btn.setStyleSheet(
-            f"QPushButton{{background:{ACCENT};color:#fff;font-size:16px;"
+            f"QPushButton{{background:{ACCENT};color:#fff;font-size:14px;"
             "border:0;border-radius:8px}"
-            "QPushButton:hover{{background:#3f7bee}}"
+            "QPushButton:hover{{background:#e03a48}}"
             f"QPushButton:checked{{background:{DANGER}}}")
         self.toggle_btn.setCheckable(True)
         self.toggle_btn.toggled.connect(self._on_toggle)
@@ -138,7 +138,7 @@ class HomePage(QWidget):
         # ---- 音色卡 ----
         vc = _card()
         vl = QVBoxLayout(vc)
-        vl.setContentsMargins(20, 16, 20, 16)
+        vl.setContentsMargins(14, 10, 14, 10)
         vl.addWidget(QLabel("当前音色"))
         self.voice_combo = QComboBox()
         self.voice_combo.currentTextChanged.connect(self._voice_changed)
@@ -154,11 +154,11 @@ class HomePage(QWidget):
 
         # ---- 权益卡 ----
         erow = QHBoxLayout()
-        erow.setSpacing(14)
+        erow.setSpacing(10)
 
         ec = _card()
         el = QVBoxLayout(ec)
-        el.setContentsMargins(20, 16, 20, 16)
+        el.setContentsMargins(14, 10, 14, 10)
         eh = QHBoxLayout()
         eh.addWidget(QLabel("免费额度"))
         eh.addStretch(1)
@@ -186,7 +186,7 @@ class HomePage(QWidget):
 
         cc = _card()
         cl2 = QVBoxLayout(cc)
-        cl2.setContentsMargins(20, 16, 20, 16)
+        cl2.setContentsMargins(14, 10, 14, 10)
         ch = QHBoxLayout()
         ch.addWidget(QLabel("时长卡 / 订阅"))
         ch.addStretch(1)
@@ -284,11 +284,11 @@ class SubtitlePage(QWidget):
         super().__init__()
         self.cfg = cfg
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(18, 14, 18, 14)
+        lay.setContentsMargins(12, 10, 12, 10)
         lay.setSpacing(12)
         card = _card()
         cl = QVBoxLayout(card)
-        cl.setContentsMargins(20, 16, 20, 16)
+        cl.setContentsMargins(14, 10, 14, 10)
         cl.addWidget(QLabel("字幕悬浮窗"))
 
         row = QHBoxLayout()
@@ -345,22 +345,22 @@ class TestPage(QWidget):
     def __init__(self):
         super().__init__()
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(18, 14, 18, 14)
-        lay.setSpacing(14)
+        lay.setContentsMargins(12, 10, 12, 10)
+        lay.setSpacing(10)
 
         card = _card()
         cl = QVBoxLayout(card)
-        cl.setContentsMargins(20, 16, 20, 16)
+        cl.setContentsMargins(14, 10, 14, 10)
         cl.addWidget(QLabel("按键与麦克风测试"))
 
         # 大号按键指示灯
         self.lamp = QLabel("按住绑定的热键说话")
         self.lamp.setAlignment(Qt.AlignCenter)
-        self.lamp.setMinimumHeight(90)
+        self.lamp.setMinimumHeight(64)
         self._lamp_off = (f"background:#262b36;color:{MUT};border-radius:10px;"
-                          "font-size:16px;font-weight:bold")
+                          "font-size:14px;font-weight:bold")
         self._lamp_on = (f"background:{DANGER};color:#fff;border-radius:10px;"
-                         "font-size:18px;font-weight:bold")
+                         "font-size:16px;font-weight:bold")
         self.lamp.setStyleSheet(self._lamp_off)
         cl.addWidget(self.lamp)
 
@@ -437,7 +437,7 @@ class HistoryPage(QWidget):
         super().__init__()
         self.history = history
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(18, 14, 18, 14)
+        lay.setContentsMargins(12, 10, 12, 10)
         head = QHBoxLayout()
         head.addWidget(QLabel("翻译记录"))
         head.addStretch(1)
@@ -474,10 +474,10 @@ class ReferralPage(QWidget):
         super().__init__()
         self.api = api
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(18, 14, 18, 14)
+        lay.setContentsMargins(12, 10, 12, 10)
         card = _card()
         cl = QVBoxLayout(card)
-        cl.setContentsMargins(20, 16, 20, 16)
+        cl.setContentsMargins(14, 10, 14, 10)
         cl.addWidget(QLabel("邀请好友"))
         tip = QLabel("好友注册时填写你的推广码，其每笔充值你将获得 "
                      "实付金额一定比例的返利（返到余额）。")
@@ -534,11 +534,11 @@ class PurchasePage(QWidget):
         self.out_trade_no = None
         self._page_url = ""
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(18, 14, 18, 14)
+        lay.setContentsMargins(12, 10, 12, 10)
 
         card = _card()
         cl = QVBoxLayout(card)
-        cl.setContentsMargins(20, 16, 20, 16)
+        cl.setContentsMargins(14, 10, 14, 10)
         cl.addWidget(QLabel("购买中心"))
 
         self.product_combo = QComboBox()
@@ -660,12 +660,12 @@ class _TextPage(QWidget):
     def __init__(self, title: str, text: str):
         super().__init__()
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(18, 14, 18, 14)
+        lay.setContentsMargins(12, 10, 12, 10)
         card = _card()
         cl = QVBoxLayout(card)
-        cl.setContentsMargins(20, 16, 20, 16)
+        cl.setContentsMargins(14, 10, 14, 10)
         t = QLabel(title)
-        t.setStyleSheet("font-size:16px;font-weight:bold")
+        t.setStyleSheet("font-size:14px;font-weight:bold")
         cl.addWidget(t)
         body = QLabel(text)
         body.setWordWrap(True)
@@ -769,20 +769,20 @@ class _TitleBar(QFrame):
         self._win = win
         self._drag = None
         self.setObjectName("titlebar")
-        self.setFixedHeight(42)
+        self.setFixedHeight(36)
 
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(14, 0, 6, 0)
-        lay.setSpacing(8)
+        lay.setContentsMargins(12, 0, 4, 0)
+        lay.setSpacing(6)
 
         badge = QLabel("V")
-        badge.setFixedSize(22, 22)
+        badge.setFixedSize(20, 20)
         badge.setAlignment(Qt.AlignCenter)
-        badge.setStyleSheet(f"background:{ACCENT};color:#fff;border-radius:6px;"
-                            "font-weight:bold;font-size:13px")
+        badge.setStyleSheet(f"background:{ACCENT};color:#fff;border-radius:5px;"
+                            "font-weight:bold;font-size:12px")
         lay.addWidget(badge)
         title = QLabel("VTranslate")
-        title.setStyleSheet("font-weight:bold;font-size:14px")
+        title.setStyleSheet("font-weight:bold;font-size:13px")
         lay.addWidget(title)
         self.dot = QLabel("●")
         self.dot.setStyleSheet(f"color:{MUT};font-size:10px")
@@ -794,7 +794,7 @@ class _TitleBar(QFrame):
                                ("✕", win.close, "close")):
             b = QPushButton(txt)
             b.setObjectName(f"tb_{obj}")
-            b.setFixedSize(40, 28)
+            b.setFixedSize(36, 24)
             b.clicked.connect(slot)
             lay.addWidget(b)
 
@@ -843,7 +843,8 @@ class MainWindow(QMainWindow):
         self.api = api
         self._direct = cfg["mode"] == "direct"
         self.setWindowTitle("VTranslate")
-        self.resize(940, 620)
+        self.resize(760, 480)
+        self.setMinimumSize(660, 420)
         # 无边框 + 圆角
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -865,10 +866,10 @@ class MainWindow(QMainWindow):
         # ---- 侧边栏 ----
         side = QFrame()
         side.setObjectName("sidebar")
-        side.setFixedWidth(96)
+        side.setFixedWidth(78)
         sl = QVBoxLayout(side)
-        sl.setContentsMargins(8, 8, 8, 8)
-        sl.setSpacing(3)
+        sl.setContentsMargins(6, 6, 6, 6)
+        sl.setSpacing(2)
 
         self._nav_btns: list[QPushButton] = []
         self._nav_keys: list[str] = []
@@ -888,7 +889,7 @@ class MainWindow(QMainWindow):
 
         self.side_balance = QLabel("¥0.00")
         self.side_balance.setStyleSheet(f"font-weight:bold;color:{TEXT};"
-                                        "padding:4px 2px;font-size:12px")
+                                        "padding:2px;font-size:11px")
         self.side_balance.setAlignment(Qt.AlignCenter)
         self.side_user = QLabel("")
         self.side_user.setStyleSheet(f"color:{MUT};padding:0 2px;font-size:11px")
@@ -980,7 +981,7 @@ class MainWindow(QMainWindow):
             #nav {{ text-align:center; padding:9px 2px; border:0;
                 border-radius:8px; color:{MUT}; font-size:12px; }}
             #nav:hover {{ background:#262b36; color:{TEXT}; }}
-            #nav:checked {{ background:#223150; color:{ACCENT}; }}
+            #nav:checked {{ background:#3a2028; color:{ACCENT}; }}
             #banner {{ background:#3a3220; color:#e8c46a; padding:8px 14px;
                 border-bottom:1px solid #554726; }}
         """)
