@@ -159,6 +159,16 @@ class Overlay(QWidget):
         """)
         self._apply_opacity()
 
+        # 无边框游戏里置顶可能被抢：每 1.5s 重新 raise 一次（仅可见时）
+        self._keep_top = QTimer(self)
+        self._keep_top.setInterval(1500)
+        self._keep_top.timeout.connect(self._raise_if_visible)
+        self._keep_top.start()
+
+    def _raise_if_visible(self):
+        if self.isVisible() and not self.isMinimized():
+            self.raise_()
+
     # ---- 外观 ----
     def _apply_opacity(self):
         self.setWindowOpacity(float(self.cfg["overlay_opacity"]))

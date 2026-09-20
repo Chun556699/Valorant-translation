@@ -8,6 +8,7 @@
 界面：瓦语通式主窗（导航+页面）+ 游戏内悬浮字幕窗。
 """
 import logging
+import os
 import queue
 import sys
 import threading
@@ -31,8 +32,15 @@ from player import PCMPlayer
 from settings_window import SettingsDialog
 from speakers import SpeakerNamer
 
-logging.basicConfig(level=logging.INFO,
-                    format="%(asctime)s %(levelname)s %(name)s %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    handlers=[
+        logging.FileHandler(
+            os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")),
+                         "VTranslate", "app.log"), encoding="utf-8"),
+        logging.StreamHandler(),
+    ])
 log = logging.getLogger("main")
 
 DEFAULT_VOICES = ["Cherry", "Tina", "Ethan", "Serena", "Kiki", "Anna"]
