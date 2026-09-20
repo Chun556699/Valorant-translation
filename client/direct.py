@@ -40,7 +40,16 @@ def _deep_find_speaker(obj):
     return None
 
 
-def _session_config(target: str, voice: str, want_audio: bool) -> dict:
+def _session_config(target: str, voice: str, want_audio: bool,
+                    stream: str = "mate") -> dict:
+    # mate 流连续翻译多说话人 -> speaker_detection；
+    # self 流按住说话 -> manual，松开时客户端 commit 作为整句，
+    # 否则模型会在中途断句导致"只翻译了第一个分句"
+    turn = ({"type": "manual"} if stream == "self" else {
+        "type": "speaker_detection",
+        "threshold": 0.5,
+        "silence_duration_ms": 1000,
+    })
     return {
         "type": "session.update",
         "session": {
@@ -48,11 +57,7 @@ def _session_config(target: str, voice: str, want_audio: bool) -> dict:
             "audio": {
                 "input": {
                     "format": {"type": "pcm", "sample_rate": 16000},
-                    "turn_detection": {
-                        "type": "speaker_detection",
-                        "threshold": 0.5,
-                        "silence_duration_ms": 1000,
-                    },
+                    "turn_detection": turn,
                 },
                 "output": {"format": {"type": "pcm", "sample_rate": 24000},
                            **({"voice": voice} if want_audio and voice else {})},
@@ -119,7 +124,7 @@ class DashScopeDirect:
                     self._ws = ws
                     await ws.send(json.dumps(
                         _session_config(self.target, self.voice,
-                                        self.want_audio)))
+                                        self.want_audio, self.stream)))
                     # 等 session.updated
                     async for raw in ws:
                         ev = json.loads(raw)

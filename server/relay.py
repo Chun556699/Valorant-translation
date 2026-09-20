@@ -51,18 +51,19 @@ def _deep_find_speaker(obj) -> str | None:
 
 def _session_config(stream: str, target: str, voice: str,
                     want_audio: bool) -> dict:
-    """构造 session.update。3.8 用 audio.input.turn_detection=speaker_detection；
-    self(按住说话) 流同样用 speaker_detection，松开时客户端补静音触发断句。"""
+    """mate 流 speaker_detection（连续多人语音自动断句+分说话人）；
+    self 流 manual——按住说话松开 commit 整句翻译，防止中途断句。"""
+    turn = ({"type": "manual"} if stream == "self" else {
+        "type": "speaker_detection",
+        "threshold": 0.5,
+        "silence_duration_ms": 1000,
+    })
     session = {
         "output_modalities": ["text", "audio"] if want_audio else ["text"],
         "audio": {
             "input": {
                 "format": {"type": "pcm", "sample_rate": 16000},
-                "turn_detection": {
-                    "type": "speaker_detection",
-                    "threshold": 0.5,
-                    "silence_duration_ms": 1000,
-                },
+                "turn_detection": turn,
             },
             "output": {"format": {"type": "pcm", "sample_rate": 24000},
                        **({"voice": voice} if want_audio and voice else {})},

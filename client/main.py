@@ -325,6 +325,11 @@ class App:
                                         or self.cfg["auto_copy"]):
                 if acc_dst:
                     self.bridge.copy_text.emit(acc_dst)
+        elif t == "turn_done":
+            # 一句结束：通知悬浮窗闭合当前气泡（此前该事件被漏掉了，
+            # 导致同一人连续发言都合并进一个气泡）
+            self.bridge.seg.emit(stream, ev.get("speaker"),
+                                 self.namer.name(ev.get("speaker"), stream), ev)
         elif t == "usage" or t == "ready":
             if not self._direct:
                 for k in ("credit_seconds", "trial_seconds",
@@ -405,9 +410,7 @@ class App:
         self.ptt_on.clear()
         self.bridge.ptt.emit(False)
         if self.self_rc:
-            # 补 0.8s 静音触发服务端断句，再兜底 commit
-            silence = b"\x00" * int(16000 * 2 * 0.8)
-            self.self_rc.send_audio(silence)
+            # Manual 断句：commit 把按住期间的全部音频作为一整句提交
             self.self_rc.commit()
         self._update_status()
 
