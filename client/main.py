@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QMessageBox
 
 import audio
 from config import Config
+from direct import DashScopeDirect, DEFAULT_WS_URL, DEFAULT_MODEL
 from history import History
 from hotkeys import PTTListener
 from login import LoginDialog
@@ -32,6 +33,8 @@ from speakers import SpeakerNamer
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("main")
+
+DEFAULT_VOICES = ["Cherry", "Tina", "Ethan", "Serena", "Kiki", "Anna"]
 
 
 class Bridge(QObject):
@@ -65,21 +68,37 @@ class App:
         self.self_rc: RelayClient | None = None
         self.ptt: PTTListener | None = None
         self._state = {"mate": "off", "self": "off"}
+        self._direct = self.cfg["mode"] == "direct"
 
     # ================= 初始化 =================
     def init(self, app: QApplication) -> bool:
         self._app = app
 
-        # ---- 登录 ----
-        if not self._ensure_login():
-            return False
-
-        # ---- meta（公告/音色/试用总量）----
-        try:
-            self.meta = self.api.meta()
-        except Exception as e:
-            log.warning("meta 获取失败: %s", e)
-            self.meta = {}
+        if self._direct:
+            # 直连模式：无需登录，但要有 API Key
+            if not self.cfg["dash_key"]:
+                QMessageBox.information(
+                    None, "VTranslate",
+                    "请先配置 DashScope API Key\n（设置 → API Key，阿里云百炼控制台申请）")
+                if not self.show_settings_modal():
+                    return False
+                if not self.cfg["dash_key"]:
+                    return False
+            self.ent = {"username": "本地直连", "money_yuan": "0.00",
+                        "money_cents": 0, "money_minutes": 0,
+                        "credit_seconds": 0, "trial_seconds": 0,
+                        "trial_expire_at": 0, "trial_active": False,
+                        "sub_active": True, "sub_expire_at": 0,
+                        "price_fen_per_minute": 0}
+            self.meta = {"voices": DEFAULT_VOICES, "trial_seconds": 0}
+        else:
+            if not self._ensure_login():
+                return False
+            try:
+                self.meta = self.api.meta()
+            except Exception as e:
+                log.warning("meta 获取失败: %s", e)
+                self.meta = {}
 
         # ---- UI ----
         self.overlay = Overlay(self.cfg)
@@ -105,6 +124,9 @@ class App:
         self.win.home.set_trial_total(self.meta.get("trial_seconds", 300))
         self.win.set_user(self.ent.get("username", ""))
         self.win.home.play_cb.setChecked(bool(self.cfg["play_audio"]))
+        if self._direct:
+            self.win.side_balance.setText("本地直连")
+            self.win.update_entitlement(self.ent)
 
         self._start_audio_threads()
         self._start_relays()
@@ -119,6 +141,11 @@ class App:
             self.win.home.toggle_btn.setChecked(True)
         self._update_status()
         return True
+
+    def show_settings_modal(self) -> bool:
+        """弹设置框（登录前也可用）。返回是否保存。"""
+        dlg = SettingsDialog(self.cfg)
+        return bool(dlg.exec())
 
     # ---------- 登录 ----------
     def _ensure_login(self) -> bool:
@@ -192,10 +219,21 @@ class App:
                 self.self_rc.send_audio(chunk)
 
     # ================= 中转连接 =================
-    def _new_relay(self, stream: str) -> RelayClient:
+    def _new_relay(self, stream: str):
+        target = (self.cfg["target_mate"] if stream == "mate"
+                  else self.cfg["target_self"])
+        if self._direct:
+            return DashScopeDirect(
+                self.cfg["dash_key"],
+                self.cfg["dash_ws_url"] or DEFAULT_WS_URL,
+                self.cfg["dash_model"] or DEFAULT_MODEL,
+                target,
+                on_event=lambda ev: self._on_relay_event(stream, ev),
+                on_state=lambda s: self._on_state(stream, s),
+                voice=self.cfg["voice"], want_audio=bool(self.cfg["play_audio"]),
+                on_audio=self.player.play, stream=stream)
         return RelayClient(
-            self.cfg["server_url"], self.cfg["token"], stream,
-            self.cfg["target_mate"] if stream == "mate" else self.cfg["target_self"],
+            self.cfg["server_url"], self.cfg["token"], stream, target,
             on_event=lambda ev: self._on_relay_event(stream, ev),
             on_state=lambda s: self._on_state(stream, s),
             voice=self.cfg["voice"],
@@ -223,10 +261,12 @@ class App:
             if ev.get("dst_final") and self.cfg["auto_copy"] and ev.get("dst"):
                 QApplication.clipboard().setText(ev["dst"])
         elif t == "usage" or t == "ready":
-            for k in ("credit_seconds", "trial_seconds", "money_cents", "sub"):
-                if k in ev:
-                    self.ent[k] = ev[k]
-            self._push_ent()
+            if not self._direct:
+                for k in ("credit_seconds", "trial_seconds",
+                          "money_cents", "sub"):
+                    if k in ev:
+                        self.ent[k] = ev[k]
+                self._push_ent()
             self._update_status()
         elif t == "error":
             log.warning("[%s] %s: %s", stream, ev.get("code"), ev.get("msg"))
@@ -321,8 +361,11 @@ class App:
             self._apply_overlay_cfg()
             self._start_hotkey()
             self.win.home.refresh_chips()
-            # 音色/播报/设备变化需重建中转连接
-            if self.running:
+            # 模式/Key/音色变化需重建会话；模式切换提示重启更稳妥
+            if self.cfg["mode"] == "direct" != self._direct:
+                QMessageBox.information(
+                    self.win, "模式已切换", "运行模式已更改，请重启客户端生效。")
+            elif self.running:
                 self.set_running(False)
                 self.set_running(True)
 

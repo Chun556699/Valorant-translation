@@ -535,13 +535,54 @@ class _TextPage(QWidget):
 
 
 TUTORIAL_TEXT = """\
-1. 首次使用：注册账号即送免费试用额度（有时效）。
-2. 进入游戏前点击「开始翻译」，字幕悬浮窗会实时显示队友语音的原文与译文。
-3. 按住自翻热键（默认鼠标侧键 X1，可在设置中改为任意键盘/鼠标键）说话，松开后即显示你发言的译文。
-4. 队友语音通过系统扬声器回环采集——请确保游戏语音从默认播放设备输出。
-5. 悬浮窗可拖动位置；开启「穿透」后鼠标点击会穿过字幕（游戏中推荐）。
-6. 本软件仅采集音频设备数据，不读取/修改任何游戏内存与数据，无封号风险。
-7. 如使用语音播报，译文会以所选音色朗读出来。
+═══════ VTranslate 配置说明书 ═══════
+
+【一、运行模式】（设置页顶部切换，保存到本机 %APPDATA%\\VTranslate\\config.json）
+
+● 直连 DashScope（个人测试，推荐现在用）
+  - 需要去阿里云百炼控制台申请 API Key：
+    1) 打开 https://bailian.console.aliyun.com/ 注册/登录
+    2) 左侧「API-KEY 管理」→ 创建新的 API-KEY（形如 sk-xxxx）
+    3) 粘贴到 设置 → 「API Key」，保存
+  - 模型地址默认 wss://dashscope.aliyuncs.com/api-ws/v1/realtime（国内）
+    海外可用 wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime
+  - 模型名默认 qwen3.8-livetranslate-flash-realtime
+  - 直连模式不计费：你按 DashScope 官方单价自负 token 费用
+    （输入音频约 7 token/秒，文本识别另计）
+
+● 计费服务器（发行版）
+  - 部署 server/ 目录下的 FastAPI 服务后，在此填服务器地址
+  - 该模式下需登录账号，翻译时长由服务器计费
+
+【二、音频】
+- 队友语音：通过 WASAPI 系统扬声器回环采集（游戏语音从哪出声就采哪）
+  设置页「回环设备」默认自动选默认扬声器；用耳机/外接声卡时可手动指定
+- 自翻语音：默认麦克风，可在设置页指定输入设备
+- 播报输出：译文 TTS 从「播报输出设备」播放，默认系统扬声器
+
+【三、使用】
+1. 点主窗「开始翻译」→ 字幕悬浮窗出现并实时双语显示队友发言
+   （多人说话时自动区分 好友1/好友2…）
+2. 按住自翻热键（默认鼠标侧键 X1）说话，松开显示你的译文
+   改键：设置 → 自翻热键 → 点击录入 → 按下任意键盘/鼠标键
+3. 悬浮窗可拖动；「穿透」开启后鼠标点不到字幕（游戏内推荐开）
+4. 译文可设置自动复制到剪贴板；开启「播放译文声音」后按所选音色播报
+5. 翻译记录页保存最近 500 条（仅存本机，不上传）
+
+【四、计费说明（服务器模式）】
+扣费优先级：订阅 > 免费额度 > 时长卡 > 余额按量
+余额按量单价见首页提示；仅对实际说话的时长计费，静音不计。
+
+【五、常见问题】
+Q 没有翻译输出？  A 检查 API Key 是否正确、余额/试用是否耗尽；
+  回环设备是否选对了出声的那个；服务器模式检查服务器地址
+Q 游戏内看不到字幕？  A 游戏需以无边框/窗口化运行；悬浮窗被全屏独占
+  游戏盖住是 Windows 限制，请切换无边框窗口模式
+Q 鼠标侧键在游戏里没反应？  A 换个键录入；部分游戏会吃掉鼠标按键事件
+Q 会不会封号？  A 不会。本程序只读写音频设备，不接触游戏进程、
+  内存、文件与网络数据，与普通录屏/语音软件同级
+
+开源仓库：https://gitee.com/chunfff/v-translation
 """
 
 CONTACT_TEXT = """\
@@ -581,6 +622,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.cfg = cfg
         self.api = api
+        self._direct = cfg["mode"] == "direct"
         self.setWindowTitle("VTranslate")
         self.resize(960, 640)
 
@@ -602,14 +644,19 @@ class MainWindow(QMainWindow):
         sl.addWidget(logo)
 
         self._nav_btns: list[QPushButton] = []
+        self._nav_keys: list[str] = []
         self.pages = QStackedWidget()
         for i, (name, key) in enumerate(self.NAV):
+            # 直连模式隐藏依赖服务器的页面
+            if self._direct and key in ("ref", "buy"):
+                continue
             b = QPushButton(name)
             b.setObjectName("nav")
             b.setCheckable(True)
-            b.clicked.connect(lambda _, idx=i: self.switch(idx))
+            b.clicked.connect(lambda _, k=key: self.switch_to(k))
             sl.addWidget(b)
             self._nav_btns.append(b)
+            self._nav_keys.append(key)
         sl.addStretch(1)
 
         self.side_balance = QLabel("余额 ¥0.00")
@@ -637,12 +684,12 @@ class MainWindow(QMainWindow):
         rl.addWidget(self.banner)
 
         # 页面
+        self._page_map = {}
         self.home = HomePage(cfg)
         self.subtitle = SubtitlePage(cfg)
         self.history_page = HistoryPage(history)
-        self.ref_page = ReferralPage(api)
-        self.buy_page = PurchasePage(api)
         self.tutorial = TutorialPage()
+        self.contact = ContactPage()
         self.settings_holder = _TextPage(
             "设置", "点击下方按钮打开设置面板。")
         open_btn = QPushButton("打开设置面板")
@@ -651,11 +698,19 @@ class MainWindow(QMainWindow):
         open_btn.clicked.connect(self.open_settings.emit)
         self.settings_holder.layout().itemAt(0).widget().layout()\
             .addWidget(open_btn)
-        self.contact = ContactPage()
-        for w in (self.home, self.subtitle, self.history_page, self.ref_page,
-                  self.buy_page, self.tutorial, self.settings_holder,
-                  self.contact):
-            self.pages.addWidget(w)
+
+        self._page_map = {
+            "home": self.home, "subtitle": self.subtitle,
+            "history": self.history_page, "tutorial": self.tutorial,
+            "settings": self.settings_holder, "contact": self.contact,
+        }
+        if not self._direct:
+            self.ref_page = ReferralPage(api)
+            self.buy_page = PurchasePage(api)
+            self._page_map["ref"] = self.ref_page
+            self._page_map["buy"] = self.buy_page
+        for key in self._nav_keys:
+            self.pages.addWidget(self._page_map[key])
         rl.addWidget(self.pages, 1)
         root.addWidget(right, 1)
         self.setCentralWidget(central)
@@ -665,7 +720,8 @@ class MainWindow(QMainWindow):
         self.home.goto_purchase.connect(self._goto_purchase)
         self.subtitle.show_overlay.connect(self.show_overlay)
         self.subtitle.apply_overlay.connect(self.apply_overlay)
-        self.buy_page.paid.connect(self._on_paid)
+        if not self._direct:
+            self.buy_page.paid.connect(self._on_paid)
 
         self.setStyleSheet(f"""
             QMainWindow, QWidget {{ background:#f6f3ee; color:#333;
@@ -686,8 +742,14 @@ class MainWindow(QMainWindow):
         for i, b in enumerate(self._nav_btns):
             b.setChecked(i == idx)
 
+    def switch_to(self, key: str):
+        if key in self._nav_keys:
+            self.switch(self._nav_keys.index(key))
+
     def _goto_purchase(self, kind: str):
-        self.switch(self.NAV.index(("购买中心", "buy")))
+        if self._direct:
+            return
+        self.switch_to("buy")
         self.buy_page.select_kind(kind)
 
     def _on_paid(self, ent: dict):

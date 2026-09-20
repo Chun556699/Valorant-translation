@@ -28,10 +28,35 @@ class SettingsDialog(QDialog):
 
         lay = QVBoxLayout(self)
         form = QFormLayout()
+        self._form = form
         lay.addLayout(form)
 
+        # ---- 运行模式 ----
+        self.mode = QComboBox()
+        self.mode.addItem("直连 DashScope（个人测试，填自己的 Key）", "direct")
+        self.mode.addItem("计费服务器（发行版）", "server")
+        self.mode.setCurrentIndex(0 if cfg["mode"] == "direct" else 1)
+        self.mode.currentIndexChanged.connect(self._mode_changed)
+        form.addRow("运行模式", self.mode)
+
+        # ---- 直连参数 ----
+        self.dash_key = QLineEdit(cfg["dash_key"])
+        self.dash_key.setEchoMode(QLineEdit.Password)
+        self.dash_key.setPlaceholderText("sk-...（百炼/DashScope 控制台获取）")
+        self.dash_url = QLineEdit(cfg["dash_ws_url"])
+        self.dash_model = QLineEdit(cfg["dash_model"])
+        self._direct_rows = [
+            ("API Key", self.dash_key),
+            ("模型地址", self.dash_url),
+            ("模型名", self.dash_model),
+        ]
+        for label, w in self._direct_rows:
+            form.addRow(label, w)
+
         self.server_edit = QLineEdit(cfg["server_url"])
+        self._server_row = self.server_edit
         form.addRow("服务器地址", self.server_edit)
+        self._mode_changed(self.mode.currentIndex())
 
         # ---- 热键 ----
         hk_row = QHBoxLayout()
@@ -142,8 +167,29 @@ class SettingsDialog(QDialog):
         self.hk_lbl.setText(self._hk_text(spec))
         self.hotkey_recording.emit("changed")
 
+    def _mode_changed(self, idx):
+        direct = self.mode.currentData() == "direct"
+        form = self._form
+        hide = {w for _, w in getattr(self, "_direct_rows", [])}
+        hide.add(self.server_edit)
+        for i in range(form.rowCount()):
+            field = form.itemAt(i, QFormLayout.FieldRole)
+            label = form.itemAt(i, QFormLayout.LabelRole)
+            if not field or not field.widget():
+                continue
+            if field.widget() in hide:
+                vis = direct if field.widget() is not self.server_edit \
+                    else not direct
+                field.widget().setVisible(vis)
+                if label and label.widget():
+                    label.widget().setVisible(vis)
+
     def _save(self):
         c = self.cfg
+        c["mode"] = self.mode.currentData()
+        c["dash_key"] = self.dash_key.text().strip()
+        c["dash_ws_url"] = self.dash_url.text().strip().rstrip("/")
+        c["dash_model"] = self.dash_model.text().strip()
         c["server_url"] = self.server_edit.text().strip().rstrip("/")
         c["target_mate"] = self.mate_target.currentData()
         c["target_self"] = self.self_target.currentData()

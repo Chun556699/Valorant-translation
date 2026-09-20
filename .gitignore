@@ -15,10 +15,9 @@ server/*.db
 server/*.db-shm
 server/*.db-wal
 
-# 打包产物
+# 打包产物（保留 *.spec 以便复现构建）
 build/
 dist/
-*.spec
 
 # 系统
 Thumbs.db

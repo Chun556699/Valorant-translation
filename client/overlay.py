@@ -87,8 +87,10 @@ class Overlay(QWidget):
         self.pin_btn.setCheckable(True)
         self.pin_btn.setChecked(self._click_through)
         self.pin_btn.toggled.connect(self._on_pin_toggle)
-        for text, fn in (("充值", self.open_recharge.emit),
-                         ("设置", self.open_settings.emit)):
+        buttons = [("设置", self.open_settings.emit)]
+        if cfg["mode"] != "direct":   # 直连模式没有充值概念
+            buttons.insert(0, ("充值", self.open_recharge.emit))
+        for text, fn in buttons:
             b = QPushButton(text)
             b.clicked.connect(fn)
             bl.addWidget(b)

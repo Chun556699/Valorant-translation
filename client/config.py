@@ -9,10 +9,16 @@ CONFIG_PATH = os.path.join(APP_DIR, "config.json")
 HISTORY_PATH = os.path.join(APP_DIR, "history.jsonl")
 
 DEFAULTS = {
+    # 运行模式: "direct"=直连DashScope(个人测试) / "server"=计费服务器
+    "mode": "direct",
     "server_url": "http://127.0.0.1:8765",
     "device_id": "",            # 首次启动生成
     "token": "",
     "username": "",
+    # ---- 直连模式 ----
+    "dash_key": "",             # 你的 DashScope API Key（仅存本机）
+    "dash_ws_url": "wss://dashscope.aliyuncs.com/api-ws/v1/realtime",
+    "dash_model": "qwen3.8-livetranslate-flash-realtime",
     # 自翻热键: {"device": "mouse", "key": "x1"} 或 {"device": "keyboard", "key": "f9"}
     "hotkey": {"device": "mouse", "key": "x1"},
     "target_mate": "zh",        # 队友语音翻译成什么语言（显示原文+译文）
