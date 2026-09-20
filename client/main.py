@@ -55,6 +55,7 @@ class Bridge(QObject):
     level = Signal(str, float)                # "mic"/"mate" RMS 电平
     mate_tick = Signal()                      # 队友音频活动脉冲
     stream_state = Signal(str, str)           # stream, state（测试页用）
+    copy_text = Signal(str)                   # 写剪贴板（UI线程执行）
 
 
 class App:
@@ -127,6 +128,8 @@ class App:
         self.bridge.level.connect(self.win.test_page.set_level)
         self.bridge.mate_tick.connect(self.overlay.mate_tick)
         self.bridge.stream_state.connect(self._sync_test_status)
+        # QClipboard 属于 UI 线程，连接即排队投递到 UI 线程执行
+        self.bridge.copy_text.connect(QApplication.clipboard().setText)
         self.win.test_self.connect(self.set_test_self)
         self.overlay.open_settings.connect(self.show_settings)
         self.overlay.open_recharge.connect(
@@ -309,9 +312,19 @@ class App:
             self.bridge.seg.emit(stream, ev.get("speaker"), name, ev)
             if stream == "mate":
                 self.bridge.mate_tick.emit()
+            # 先取累计译文（_record_history 定稿后会清空缓冲）
+            key = (stream, ev.get("speaker") or name)
+            acc_dst = (self._hist_acc.get(key, {}).get("dst", "")
+                       + ev.get("dst_delta", "") or "")
+            if ev.get("dst"):
+                acc_dst = ev["dst"]
             self._record_history(stream, name, ev)
-            if ev.get("dst_final") and self.cfg["auto_copy"] and ev.get("dst"):
-                QApplication.clipboard().setText(ev["dst"])
+            # 自翻译文定稿总是复制（按住说话→Ctrl+V 的闭环）；
+            # 队友译文由"自动复制"开关控制
+            if ev.get("dst_final") and (stream == "self"
+                                        or self.cfg["auto_copy"]):
+                if acc_dst:
+                    self.bridge.copy_text.emit(acc_dst)
         elif t == "usage" or t == "ready":
             if not self._direct:
                 for k in ("credit_seconds", "trial_seconds",
