@@ -89,6 +89,13 @@ class App:
         self._lvl_t = {"mic": 0.0, "mate": 0.0}   # 电平发射节流
         self._mate_filter = (audio.SpeechBandFilter()
                              if self.cfg["mate_filter"] else None)
+        # 设置热更新快照：只有这些键变化才重建翻译会话
+        self._RELAY_KEYS = ("mode", "dash_key", "dash_ws_url", "dash_model",
+                            "server_url", "target_mate", "target_self",
+                            "voice", "play_audio")
+        self._relay_snap = {k: self.cfg[k] for k in self._RELAY_KEYS}
+        self._pa_on = bool(self.cfg["play_audio"])
+        self._pa_dev = self.cfg["output_device"]
 
     # ================= 初始化 =================
     def init(self, app: QApplication) -> bool:
@@ -228,13 +235,18 @@ class App:
         self.bridge.level.emit(which, self._rms(pcm))
 
     def _mate_feeder(self):
-        """回环 -> mate 中转（仅 running 时采集发送）。"""
+        """回环 -> mate 中转（仅 running 时采集发送）。设备改了热切换。"""
         started = False
+        cur_dev = None
         while True:
             try:
                 want = self.running and self._mate_on
-                if want and not started:
-                    self.loopback.start(self.cfg["loopback_device"])
+                dev = self.cfg["loopback_device"]
+                if want and (not started or cur_dev != dev):
+                    if started:
+                        self.loopback.stop()
+                    self.loopback.start(dev)
+                    cur_dev = dev
                     started = True
                 elif not want and started:
                     self.loopback.stop()
@@ -262,14 +274,24 @@ class App:
                 time.sleep(1)
 
     def _mic_feeder(self):
-        """麦克风 -> self 中转（仅 running + 按住热键时发送）。"""
+        """麦克风 -> self 中转（仅 running + 按住热键时发送）。
+        设置里改麦克风设备后热切换。"""
+        cur_dev = self.cfg["mic_device"]
         try:
-            self.mic.start(self.cfg["mic_device"])
+            self.mic.start(cur_dev)
         except Exception as e:
             log.warning("麦克风启动失败: %s", e)
             return
         while True:
             try:
+                if self.cfg["mic_device"] != cur_dev:
+                    cur_dev = self.cfg["mic_device"]
+                    try:
+                        self.mic.stop()
+                        self.mic.start(cur_dev)
+                        log.info("麦克风已切换到设备 %s", cur_dev)
+                    except Exception as e:
+                        log.warning("麦克风切换失败: %s", e)
                 chunk = audio.drain_queue(self.mic_q, timeout=0.5)
             except queue.Empty:
                 continue
@@ -466,23 +488,68 @@ class App:
         self.win.switch_to("settings")
 
     def _on_settings_saved(self):
+        """设置页任一控件改动后即时应用。"""
         self._apply_overlay_cfg()
-        self._start_hotkey()
         self.win.home.refresh_chips()
-        # 播报开关/输出设备变更：重建播放器
-        if self.cfg["play_audio"]:
+        self._mate_filter = (audio.SpeechBandFilter()
+                             if self.cfg["mate_filter"] else None)
+        # 播报开关/输出设备变化 → 重建播放器
+        pa_on = bool(self.cfg["play_audio"])
+        if pa_on != getattr(self, "_pa_on", False) \
+                or self.cfg["output_device"] != self._pa_dev:
             self.player.terminate()
             self.player = PCMPlayer(self.cfg["output_device"])
+            self._pa_dev = self.cfg["output_device"]
+        self._pa_on = pa_on
+        if pa_on and not self.player._running:
             self.player.start()
+
+        # 影响会话的键变了才重建翻译通道
+        snap = {k: self.cfg[k] for k in self._RELAY_KEYS}
+        if snap == self._relay_snap:
+            return
+        self._relay_snap = snap
+        if snap["mode"] == "direct" != self._direct:
+            ret = QMessageBox.question(
+                self.win, "运行模式已切换",
+                "直连/服务器模式切换需要重启客户端。\n现在立即重启？",
+                QMessageBox.Yes | QMessageBox.No)
+            if ret == QMessageBox.Yes:
+                self._restart_app()
+            return
+        if self.running or self._test_self:
+            self._restart_sessions()
+
+    def _restart_sessions(self):
+        """不停「开始翻译」状态，原地重建两条翻译通道（热更新配置）。"""
+        for rc in (self.mate_rc, self.self_rc):
+            if rc:
+                rc.stop()
+        self.mate_rc = self._new_relay("mate")
+        self.self_rc = self._new_relay("self")
+        if self.running:
+            self.self_rc.start()
+            if self._mate_on:
+                self.mate_rc.start()
+        elif self._test_self:
+            self.self_rc.start()
+        log.info("翻译会话已热重建")
+
+    def _restart_app(self):
+        """重启客户端（模式切换用）：关掉单实例锁后拉起新进程再退出。"""
+        import os
+        import subprocess
+        try:
+            self._single_srv.close()
+            QLocalServer.removeServer(_SINGLE_KEY)
+        except Exception:
+            pass
+        if getattr(sys, "frozen", False):
+            subprocess.Popen([sys.executable])
         else:
-            self.player.stop()
-        # 模式/Key/音色变化需重建会话；模式切换提示重启更稳妥
-        if self.cfg["mode"] == "direct" != self._direct:
-            QMessageBox.information(
-                self.win, "模式已切换", "运行模式已更改，请重启客户端生效。")
-        elif self.running:
-            self.set_running(False)
-            self.set_running(True)
+            subprocess.Popen([sys.executable, os.path.abspath(sys.argv[0])],
+                             cwd=os.path.dirname(os.path.abspath(sys.argv[0])))
+        self._app.quit()
 
     def _test_beep(self):
         """设置页「试听播报」：走真实播放链路发一声测试音。"""

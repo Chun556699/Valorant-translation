@@ -1,10 +1,17 @@
 """设置窗口：服务器/热键/目标语言/悬浮窗外观/音频设备。"""
 import threading
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QHBoxLayout,
-                               QLineEdit, QPushButton, QComboBox, QSlider,
-                               QCheckBox, QLabel, QSpinBox)
+from PySide6.QtCore import Qt, Signal, QObject, QEvent
+from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QFormLayout,
+                               QHBoxLayout, QLineEdit, QPushButton, QComboBox,
+                               QSlider, QCheckBox, QLabel, QSpinBox)
+
+
+class _NoWheel(QObject):
+    """吞掉滚轮事件：滚动设置页时不会误改 ComboBox/SpinBox/Slider 的值。"""
+
+    def eventFilter(self, obj, ev):
+        return ev.type() == QEvent.Wheel
 
 import audio
 from hotkeys import HotkeyRecorder
@@ -167,20 +174,43 @@ class SettingsDialog(QDialog):
 
         # ---- 保存 ----
         btns = QHBoxLayout()
-        save = QPushButton("保存")
-        save.clicked.connect(self._save)
-        btns.addStretch(1)
-        btns.addWidget(save)
         if not embedded:
+            save = QPushButton("保存")
+            save.clicked.connect(self._save)
             cancel = QPushButton("取消")
             cancel.clicked.connect(self.reject)
+            btns.addStretch(1)
+            btns.addWidget(save)
             btns.addWidget(cancel)
         else:
-            self.save_tip = QLabel("")
-            self.save_tip.setStyleSheet("color:#46c27e")
-            btns.addWidget(self.save_tip)
+            hint = QLabel("✓ 改动即时生效，无需重启")
+            hint.setStyleSheet("color:#7a8494")
             btns.addStretch(1)
+            btns.addWidget(hint)
         lay.addLayout(btns)
+
+        # 滚轮误触保护：滚动页面时 ComboBox/SpinBox/Slider 不变值
+        self._no_wheel = _NoWheel(self)
+        for w in self.findChildren(QWidget):
+            if isinstance(w, (QComboBox, QSpinBox, QSlider)):
+                w.installEventFilter(self._no_wheel)
+
+        if embedded:
+            self._wire_live_apply()
+
+    def _wire_live_apply(self):
+        """嵌入模式：任何控件变更立即保存并生效（无需点保存/重启）。"""
+        for w in (self.mode, self.mate_target, self.self_target,
+                  self.mic_combo, self.lb_combo, self.out_combo):
+            w.currentIndexChanged.connect(lambda *_: self._apply())
+        for w in (self.dash_key, self.dash_url, self.dash_model,
+                  self.server_edit):
+            w.editingFinished.connect(self._apply)
+        for w in (self.play_audio, self.auto_copy, self.mate_filter,
+                  self.through):
+            w.toggled.connect(lambda _: self._apply())
+        self.opacity.sliderReleased.connect(self._apply)
+        self.max_lines.valueChanged.connect(lambda _: self._apply())
 
     @staticmethod
     def _select_device(combo, value):
@@ -202,6 +232,8 @@ class SettingsDialog(QDialog):
     def _hotkey_captured(self, spec):
         self.cfg["hotkey"] = spec
         self.hk_lbl.setText(self._hk_text(spec))
+        if self._embedded:
+            self._apply()
         self.hotkey_recording.emit("changed")
 
     def _test_conn(self):
@@ -283,7 +315,8 @@ class SettingsDialog(QDialog):
                 if label and label.widget():
                     label.widget().setVisible(vis)
 
-    def _save(self):
+    def _apply(self):
+        """把控件值写入 cfg 并落盘，emit saved 让主程序即时应用。"""
         c = self.cfg
         c["mode"] = self.mode.currentData()
         c["dash_key"] = self.dash_key.text().strip()
@@ -303,10 +336,11 @@ class SettingsDialog(QDialog):
         c["click_through"] = self.through.isChecked()
         c.save()
         self.saved.emit()
-        if self._embedded:
-            self.save_tip.setText("已保存 ✓")
-        else:
-            self.accept()
+
+    def _save(self):
+        """模态对话框的「保存」按钮路径。"""
+        self._apply()
+        self.accept()
 
     def reject(self):
         if self._recorder:

@@ -314,6 +314,9 @@ class SubtitlePage(QWidget):
             min(range(5), key=lambda i: abs((40 + i * 15)
                  - float(cfg["overlay_opacity"]) * 100)))
         self.opacity.currentIndexChanged.connect(self._opacity)
+        from settings_window import _NoWheel      # 滚轮防误触
+        self._nw = _NoWheel(self)
+        self.opacity.installEventFilter(self._nw)
         op_row.addWidget(self.opacity)
         op_row.addStretch(1)
         cl.addLayout(op_row)
