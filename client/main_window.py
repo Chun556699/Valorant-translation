@@ -544,8 +544,9 @@ TUTORIAL_TEXT = """\
     1) 打开 https://bailian.console.aliyun.com/ 注册/登录
     2) 左侧「API-KEY 管理」→ 创建新的 API-KEY（形如 sk-xxxx）
     3) 粘贴到 设置 → 「API Key」，保存
-  - 模型地址默认 wss://dashscope.aliyuncs.com/api-ws/v1/realtime（国内）
-    海外可用 wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime
+  - 模型地址默认你的业务空间专属域名（已预填，勿改）：
+    wss://llm-5gwthr14damb7ihz.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime
+    对应 REST base https://llm-5gwthr14damb7ihz.cn-beijing.maas.aliyuncs.com/api/v1
   - 模型名默认 qwen3.8-livetranslate-flash-realtime
   - 直连模式不计费：你按 DashScope 官方单价自负 token 费用
     （输入音频约 7 token/秒，文本识别另计）

@@ -9,9 +9,10 @@ def _env(name: str, default: str = "") -> str:
 
 # ---- DashScope / Qwen LiveTranslate ----
 DASHSCOPE_API_KEY = _env("DASHSCOPE_API_KEY")
-# 默认走阿里云百炼国内端点；千问AI平台端点为 wss://maas.qianwenaiapi.com/api-ws/v1/realtime
+# 默认走业务空间专属域名；通用端点 wss://dashscope.aliyuncs.com/api-ws/v1/realtime
 DASHSCOPE_WS_URL = _env(
-    "DASHSCOPE_WS_URL", "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
+    "DASHSCOPE_WS_URL",
+    "wss://llm-5gwthr14damb7ihz.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime"
 )
 TRANSLATE_MODEL = _env("TRANSLATE_MODEL", "qwen3.8-livetranslate-flash-realtime")
 # 可选：JSON 字符串，合并进 session.update 的 session 字段，用于不打码调参

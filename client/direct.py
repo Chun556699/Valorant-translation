@@ -14,7 +14,9 @@ import websockets
 
 log = logging.getLogger("direct")
 
-DEFAULT_WS_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
+# 百炼业务空间专属域名（实时 WS 走 /api-ws/v1/realtime，与 REST /api/v1 对应）
+DEFAULT_WS_URL = ("wss://llm-5gwthr14damb7ihz.cn-beijing.maas.aliyuncs.com"
+                  "/api-ws/v1/realtime")
 DEFAULT_MODEL = "qwen3.8-livetranslate-flash-realtime"
 
 

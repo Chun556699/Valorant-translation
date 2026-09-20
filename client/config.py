@@ -17,7 +17,7 @@ DEFAULTS = {
     "username": "",
     # ---- 直连模式 ----
     "dash_key": "",             # 你的 DashScope API Key（仅存本机）
-    "dash_ws_url": "wss://dashscope.aliyuncs.com/api-ws/v1/realtime",
+    "dash_ws_url": "wss://llm-5gwthr14damb7ihz.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime",
     "dash_model": "qwen3.8-livetranslate-flash-realtime",
     # 自翻热键: {"device": "mouse", "key": "x1"} 或 {"device": "keyboard", "key": "f9"}
     "hotkey": {"device": "mouse", "key": "x1"},
