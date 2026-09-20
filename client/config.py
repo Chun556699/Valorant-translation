@@ -27,6 +27,7 @@ DEFAULTS = {
     "running": False,           # 翻译开关（开始/停止）
     "voice": "Cherry",          # 译文播报音色
     "play_audio": True,         # 播放译文声音（TTS）
+    "ui_lang": "",              # 界面语言 zh/en，空=首次启动时选择
     "auto_copy": False,         # 译文定稿自动复制到剪贴板
     "mate_filter": True,        # 队友流语音频段过滤（抑制枪声等噪声）
     "overlay_opacity": 0.85,
@@ -35,6 +36,8 @@ DEFAULTS = {
     "mic_device": None,         # None=默认
     "loopback_device": None,    # None=默认扬声器回环
     "output_device": None,      # None=默认扬声器（TTS 播报）
+    "overlay_src_color": "#bbbbbb",   # 悬浮窗原文颜色
+    "overlay_dst_color": "#ffffff",   # 悬浮窗译文颜色
 }
 
 

@@ -9,7 +9,7 @@ import webbrowser
 
 import qrcode
 from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtGui import QImage, QPixmap, QColor
 from PySide6.QtWidgets import (QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
                                QLabel, QPushButton, QComboBox, QRadioButton,
                                QButtonGroup, QStackedWidget, QFrame,
@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (QWidget, QMainWindow, QVBoxLayout, QHBoxLayout,
                                QSizeGrip)
 
 from history import History
+from i18n import tr
 
 log = logging.getLogger("main_window")
 
@@ -103,7 +104,7 @@ class HomePage(QWidget):
         cl = QVBoxLayout(card)
         cl.setContentsMargins(14, 10, 14, 10)
         head = QHBoxLayout()
-        head.addWidget(QLabel("翻译"))
+        head.addWidget(QLabel(tr("翻译")))
         head.addStretch(1)
         cl.addLayout(head)
 
@@ -114,12 +115,12 @@ class HomePage(QWidget):
         self.chips.setMaximumWidth(360)
         cl.addWidget(self.chips)
 
-        self.status = QLabel("准备就绪")
+        self.status = QLabel(tr("准备就绪"))
         self.status.setStyleSheet("font-size:18px;font-weight:bold;"
                                   "padding:10px 0")
         cl.addWidget(self.status)
 
-        self.toggle_btn = QPushButton("开始翻译")
+        self.toggle_btn = QPushButton(tr("开始翻译"))
         self.toggle_btn.setMinimumHeight(38)
         self.toggle_btn.setStyleSheet(
             f"QPushButton{{background:{ACCENT};color:#fff;font-size:14px;"
@@ -130,7 +131,7 @@ class HomePage(QWidget):
         self.toggle_btn.toggled.connect(self._on_toggle)
         cl.addWidget(self.toggle_btn)
 
-        self.balance_lbl = QLabel("余额 ¥0.00  约 0 分钟")
+        self.balance_lbl = QLabel(tr("余额") + " ¥0.00  ~0 min")
         self.balance_lbl.setStyleSheet(f"color:{MUT};padding-top:10px")
         cl.addWidget(self.balance_lbl)
         row.addWidget(card, 3)
@@ -139,11 +140,11 @@ class HomePage(QWidget):
         vc = _card()
         vl = QVBoxLayout(vc)
         vl.setContentsMargins(14, 10, 14, 10)
-        vl.addWidget(QLabel("当前音色"))
+        vl.addWidget(QLabel(tr("当前音色")))
         self.voice_combo = QComboBox()
         self.voice_combo.currentTextChanged.connect(self._voice_changed)
         vl.addWidget(self.voice_combo)
-        self.play_cb = QPushButton("播报译文: 开")
+        self.play_cb = QPushButton(tr("播报译文: 开"))
         self.play_cb.setCheckable(True)
         self.play_cb.setChecked(bool(cfg["play_audio"]))
         self.play_cb.toggled.connect(self._play_toggled)
@@ -160,15 +161,15 @@ class HomePage(QWidget):
         el = QVBoxLayout(ec)
         el.setContentsMargins(14, 10, 14, 10)
         eh = QHBoxLayout()
-        eh.addWidget(QLabel("免费额度"))
+        eh.addWidget(QLabel(tr("免费额度")))
         eh.addStretch(1)
-        sub_btn = QPushButton("开通订阅")
+        sub_btn = QPushButton(tr("开通订阅"))
         sub_btn.setStyleSheet(f"color:{ACCENT};border:1px solid {ACCENT};"
                               f"border-radius:4px;padding:2px 10px;background:{CARD}")
         sub_btn.clicked.connect(lambda: self.goto_purchase.emit("sub"))
         eh.addWidget(sub_btn)
         el.addLayout(eh)
-        self.trial_title = QLabel("新用户免费额度")
+        self.trial_title = QLabel(tr("新用户免费额度"))
         self.trial_title.setStyleSheet("font-weight:bold;font-size:15px")
         el.addWidget(self.trial_title)
         self.trial_bar = QProgressBar()
@@ -188,15 +189,15 @@ class HomePage(QWidget):
         cl2 = QVBoxLayout(cc)
         cl2.setContentsMargins(14, 10, 14, 10)
         ch = QHBoxLayout()
-        ch.addWidget(QLabel("时长卡 / 订阅"))
+        ch.addWidget(QLabel(tr("时长卡 / 订阅")))
         ch.addStretch(1)
         ch.addWidget(QLabel(""))
         cl2.addLayout(ch)
-        self.card_lbl = QLabel("时长卡 0 分钟")
+        self.card_lbl = QLabel(tr("时长卡") + " 0 min")
         self.card_lbl.setStyleSheet("font-weight:bold;font-size:15px")
-        self.sub_lbl = QLabel("订阅未开通")
+        self.sub_lbl = QLabel(tr("订阅未开通"))
         self.sub_lbl.setStyleSheet(f"color:{MUT};font-size:12px")
-        buy = QPushButton("购买时长卡")
+        buy = QPushButton(tr("购买时长卡"))
         buy.setStyleSheet(f"background:{ACCENT};color:#fff;border:0;"
                           "border-radius:4px;padding:6px")
         buy.clicked.connect(lambda: self.goto_purchase.emit("card"))
@@ -213,10 +214,11 @@ class HomePage(QWidget):
     def refresh_chips(self):
         hk = self.cfg["hotkey"]
         dev = "鼠标" if hk.get("device") == "mouse" else "键盘"
-        play = "播报译文" if self.cfg["play_audio"] else "仅文本"
+        play = tr("播报译文") if self.cfg["play_audio"] else "TTS off"
         self.chips.setText(
-            f"队友→{self.cfg['target_mate']} · 按住{dev}{hk.get('key','')}自翻"
-            f"→{self.cfg['target_self']} · {play}")
+            f"队友→{self.cfg['target_mate']} · " + tr("按住")
+            + f"{dev}{hk.get('key','')}" + tr("自翻")
+            + f"→{self.cfg['target_self']} · {play}")
 
     def set_voices(self, voices: list):
         self.voice_combo.blockSignals(True)
@@ -233,13 +235,13 @@ class HomePage(QWidget):
     def _play_toggled(self, on):
         self.cfg["play_audio"] = on
         self.cfg.save()
-        self.play_cb.setText(f"播报译文: {'开' if on else '关'}")
+        self.play_cb.setText(tr("播报译文: 开") if on else tr("播报译文: 关"))
         self.refresh_chips()
 
     def _on_toggle(self, on):
         self._running = on
-        self.toggle_btn.setText("停止翻译" if on else "开始翻译")
-        self.status.setText("翻译中…" if on else "准备就绪")
+        self.toggle_btn.setText(tr("停止翻译") if on else tr("开始翻译"))
+        self.status.setText(tr("翻译中…") if on else tr("准备就绪"))
         self.start_stop.emit(on)
 
     def set_status_text(self, s: str):
@@ -255,24 +257,24 @@ class HomePage(QWidget):
 
     def update_entitlement(self, e: dict):
         self.balance_lbl.setText(
-            f"余额 ¥{e['money_yuan']}  约 {e['money_minutes']} 分钟")
+            tr("余额") + f" ¥{e['money_yuan']}  ~{e['money_minutes']} min")
         total = getattr(self, "_trial_total", 300)
         if e.get("trial_seconds", 0) > 0 and e.get("trial_expire_at", 0) > 0:
             pct = min(100, int(e["trial_seconds"] / total * 100))
             self.trial_title.setText(
-                f"新用户免费额度  剩余 {e['trial_seconds']} 秒")
+                tr("新用户免费额度") + f"  {e['trial_seconds']}s")
             self.trial_info.setText(
-                f"{_fmt_ts(e['trial_expire_at'])} 到期 · 优先抵扣翻译时长")
+                tr("到期") + ": " + _fmt_ts(e["trial_expire_at"]) + " · " + tr("优先抵扣翻译时长"))
         else:
             pct = 0
-            self.trial_title.setText("免费额度已用完")
-            self.trial_info.setText("开通订阅或购买时长卡继续使用")
+            self.trial_title.setText(tr("免费额度已用完"))
+            self.trial_info.setText(tr("开通订阅或购买时长卡继续使用"))
         self.trial_bar.setValue(pct)
-        self.card_lbl.setText(f"时长卡 {e['credit_seconds']//60} 分钟")
+        self.card_lbl.setText(tr("时长卡") + f" {e['credit_seconds']//60} min")
         if e["sub_active"]:
-            self.sub_lbl.setText(f"订阅中 · {_fmt_ts(e['sub_expire_at'])} 到期")
+            self.sub_lbl.setText(tr("订阅中") + " · " + _fmt_ts(e["sub_expire_at"]))
         else:
-            self.sub_lbl.setText("订阅未开通")
+            self.sub_lbl.setText(tr("订阅未开通"))
 
 
 # ================= 字幕窗口页 =================
@@ -289,24 +291,24 @@ class SubtitlePage(QWidget):
         card = _card()
         cl = QVBoxLayout(card)
         cl.setContentsMargins(14, 10, 14, 10)
-        cl.addWidget(QLabel("字幕悬浮窗"))
+        cl.addWidget(QLabel(tr("字幕悬浮窗")))
 
         row = QHBoxLayout()
-        self.show_btn = QPushButton("显示/隐藏字幕窗")
+        self.show_btn = QPushButton(tr("显示/隐藏字幕窗"))
         self.show_btn.clicked.connect(lambda: self.show_overlay.emit(True))
         row.addWidget(self.show_btn)
 
         self.through_btn = QPushButton()
         self.through_btn.setCheckable(True)
         self.through_btn.setChecked(bool(cfg["click_through"]))
-        self.through_btn.setText("穿透: 开" if cfg["click_through"] else "穿透: 关")
+        self.through_btn.setText(tr("穿透: 开") if cfg["click_through"] else tr("穿透: 关"))
         self.through_btn.toggled.connect(self._through)
         row.addWidget(self.through_btn)
         row.addStretch(1)
         cl.addLayout(row)
 
         op_row = QHBoxLayout()
-        op_row.addWidget(QLabel("不透明度"))
+        op_row.addWidget(QLabel(tr("不透明度")))
         self.opacity = QComboBox()
         for v in (40, 55, 70, 85, 100):
             self.opacity.addItem(f"{v}%", v / 100)
@@ -321,16 +323,73 @@ class SubtitlePage(QWidget):
         op_row.addStretch(1)
         cl.addLayout(op_row)
 
-        tip = QLabel("提示：开启穿透后游戏中鼠标点击会直接穿过字幕，"
-                     "可在托盘菜单重新打开设置。")
+        tip = QLabel(tr("提示：开启穿透后游戏中鼠标点击会直接穿过字幕，可在托盘菜单重新打开设置。"))
         tip.setWordWrap(True)
         tip.setStyleSheet(f"color:{MUT};font-size:12px")
         cl.addWidget(tip)
+
+        # ---- 样式预览 + 文字颜色 ----
+        pl = QVBoxLayout()
+        pl.setSpacing(6)
+        pl.addWidget(QLabel(tr("预览")))
+        self._pv = QFrame()
+        self._pv.setStyleSheet("background:rgba(28,28,34,235);"
+                               "border-radius:8px;border:0")
+        pvl = QVBoxLayout(self._pv)
+        pvl.setContentsMargins(10, 8, 10, 8)
+        pvl.setSpacing(1)
+        spk = QLabel("好友1")
+        spk.setStyleSheet("color:#9dff9d;font-weight:bold;font-size:12px")
+        self._pv_src = QLabel("Cover me, I'm planting the spike")
+        self._pv_dst = QLabel("掩护我，我在下包")
+        pvl.addWidget(spk)
+        pvl.addWidget(self._pv_src)
+        pvl.addWidget(self._pv_dst)
+        pl.addWidget(self._pv)
+        crow = QHBoxLayout()
+        self._src_btn = self._color_btn("overlay_src_color")
+        self._dst_btn = self._color_btn("overlay_dst_color")
+        crow.addWidget(QLabel(tr("原文颜色")))
+        crow.addWidget(self._src_btn)
+        crow.addSpacing(12)
+        crow.addWidget(QLabel(tr("译文颜色")))
+        crow.addWidget(self._dst_btn)
+        crow.addStretch(1)
+        pl.addLayout(crow)
+        cl.addLayout(pl)
+        self._refresh_preview()
         lay.addWidget(card)
         lay.addStretch(1)
 
+    def _color_btn(self, key: str) -> QPushButton:
+        b = QPushButton()
+        b.setFixedSize(46, 22)
+        b.setStyleSheet(f"background:{self.cfg[key]};border:1px solid {BORDER};"
+                        "border-radius:4px")
+        b.clicked.connect(lambda: self._pick_color(key, b))
+        return b
+
+    def _pick_color(self, key: str, btn: QPushButton):
+        from PySide6.QtWidgets import QColorDialog
+        c = QColorDialog.getColor(QColor(self.cfg[key]), self, tr("选择颜色"))
+        if not c.isValid():
+            return
+        self.cfg[key] = c.name()
+        self.cfg.save()
+        btn.setStyleSheet(f"background:{c.name()};border:1px solid {BORDER};"
+                          "border-radius:4px")
+        self._refresh_preview()
+        self.apply_overlay.emit()
+
+    def _refresh_preview(self):
+        self._pv_src.setStyleSheet(
+            f"color:{self.cfg['overlay_src_color']};font-size:12px")
+        self._pv_dst.setStyleSheet(
+            f"color:{self.cfg['overlay_dst_color']};font-size:14px;"
+            "font-weight:600")
+
     def _through(self, on):
-        self.through_btn.setText(f"穿透: {'开' if on else '关'}")
+        self.through_btn.setText(tr("穿透: 开") if on else tr("穿透: 关"))
         self.cfg["click_through"] = on
         self.cfg.save()
         self.apply_overlay.emit()
@@ -354,10 +413,10 @@ class TestPage(QWidget):
         card = _card()
         cl = QVBoxLayout(card)
         cl.setContentsMargins(14, 10, 14, 10)
-        cl.addWidget(QLabel("按键与麦克风测试"))
+        cl.addWidget(QLabel(tr("按键与麦克风测试")))
 
         # 大号按键指示灯
-        self.lamp = QLabel("按住绑定的热键说话")
+        self.lamp = QLabel(tr("按住绑定的热键说话"))
         self.lamp.setAlignment(Qt.AlignCenter)
         self.lamp.setMinimumHeight(64)
         self._lamp_off = (f"background:#eef0f3;color:{MUT};border-radius:10px;"
@@ -368,7 +427,7 @@ class TestPage(QWidget):
         cl.addWidget(self.lamp)
 
         # 电平条
-        for label, attr in (("麦克风", "mic_bar"), ("队友回环", "mate_bar")):
+        for label, attr in ((tr("麦克风"), "mic_bar"), (tr("队友回环"), "mate_bar")):
             row = QHBoxLayout()
             row.addWidget(QLabel(label))
             bar = QProgressBar()
@@ -384,7 +443,7 @@ class TestPage(QWidget):
 
         # 测试开关 + 状态
         row = QHBoxLayout()
-        self.test_btn = QPushButton("开始测试（拉起自翻通道）")
+        self.test_btn = QPushButton(tr("开始测试（拉起自翻通道）"))
         self.test_btn.setCheckable(True)
         self.test_btn.setStyleSheet(
             f"QPushButton{{background:{ACCENT};color:#fff;border:0;"
@@ -397,9 +456,7 @@ class TestPage(QWidget):
         row.addWidget(self.status_lbl, 1)
         cl.addLayout(row)
 
-        tip = QLabel("说明：测试模式下按住热键说话，松开后悬浮窗会显示译文；"
-                     "电平条验证采集是否正常（麦克风条应随说话跳动）。"
-                     "热键在「设置」页录入。")
+        tip = QLabel(tr("说明：测试模式下按住热键说话，松开后悬浮窗会显示译文；电平条验证采集是否正常（麦克风条应随说话跳动）。热键在「设置」页录入。"))
         tip.setWordWrap(True)
         tip.setStyleSheet(f"color:{MUT};font-size:12px")
         cl.addWidget(tip)
@@ -413,12 +470,12 @@ class TestPage(QWidget):
         self._decay.start()
 
     def _toggled(self, on):
-        self.test_btn.setText("停止测试" if on else "开始测试（拉起自翻通道）")
-        self.status_lbl.setText("连接中…" if on else "")
+        self.test_btn.setText(tr("停止测试") if on else tr("开始测试（拉起自翻通道）"))
+        self.status_lbl.setText(tr("连接中…") if on else "")
         self.test_self.emit(on)
 
     def set_pressed(self, on: bool):
-        self.lamp.setText("说话中…松开完成" if on else "按住绑定的热键说话")
+        self.lamp.setText(tr("说话中…松开完成") if on else tr("按住绑定的热键说话"))
         self.lamp.setStyleSheet(self._lamp_on if on else self._lamp_off)
 
     def set_level(self, which: str, v: float):
@@ -442,9 +499,9 @@ class HistoryPage(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(12, 10, 12, 10)
         head = QHBoxLayout()
-        head.addWidget(QLabel("翻译记录"))
+        head.addWidget(QLabel(tr("翻译记录")))
         head.addStretch(1)
-        clr = QPushButton("清空")
+        clr = QPushButton(tr("清空"))
         clr.clicked.connect(self._clear)
         head.addWidget(clr)
         lay.addLayout(head)
@@ -481,7 +538,7 @@ class ReferralPage(QWidget):
         card = _card()
         cl = QVBoxLayout(card)
         cl.setContentsMargins(14, 10, 14, 10)
-        cl.addWidget(QLabel("邀请好友"))
+        cl.addWidget(QLabel(tr("推广")))
         tip = QLabel("好友注册时填写你的推广码，其每笔充值你将获得 "
                      "实付金额一定比例的返利（返到余额）。")
         tip.setWordWrap(True)
@@ -542,7 +599,7 @@ class PurchasePage(QWidget):
         card = _card()
         cl = QVBoxLayout(card)
         cl.setContentsMargins(14, 10, 14, 10)
-        cl.addWidget(QLabel("购买中心"))
+        cl.addWidget(QLabel(tr("购买中心")))
 
         self.product_combo = QComboBox()
         try:
@@ -789,7 +846,7 @@ class _TitleBar(QFrame):
         lay.addWidget(title)
         self.dot = QLabel("●")
         self.dot.setStyleSheet(f"color:{MUT};font-size:10px")
-        self.dot.setToolTip("灰=待机 绿=翻译中")
+        self.dot.setToolTip("gray=idle  green=translating")
         lay.addWidget(self.dot)
         lay.addStretch(1)
 
@@ -888,7 +945,7 @@ class MainWindow(QMainWindow):
             # 直连模式隐藏依赖服务器的页面
             if self._direct and key in ("ref", "buy"):
                 continue
-            b = QPushButton(f"{icon}\n{name}")
+            b = QPushButton(f"{icon}\n{tr(name)}")
             b.setObjectName("nav")
             b.setCheckable(True)
             b.clicked.connect(lambda _, k=key: self.switch_to(k))
@@ -905,7 +962,7 @@ class MainWindow(QMainWindow):
         self.side_user.setStyleSheet(f"color:{MUT};padding:0 2px;font-size:11px")
         self.side_user.setAlignment(Qt.AlignCenter)
         self.side_user.setWordWrap(True)
-        out = QPushButton("退出")
+        out = QPushButton(tr("退出登录"))
         out.setObjectName("nav")
         out.clicked.connect(self.logout.emit)
         sl.addWidget(self.side_balance)
@@ -1018,7 +1075,7 @@ class MainWindow(QMainWindow):
         except Exception:
             tray = None
         if tray:
-            tray.showMessage("VTranslate", "已最小化到托盘，右键托盘图标可退出",
+            tray.showMessage("VTranslate", tr("已最小化到托盘，右键托盘图标可退出"),
                              tray.icon(), 2500)
 
     def switch(self, idx: int):
@@ -1038,7 +1095,7 @@ class MainWindow(QMainWindow):
 
     def _on_paid(self, ent: dict):
         self.update_entitlement(ent)
-        QMessageBox.information(self, "充值成功", "支付成功，权益已到账！")
+        QMessageBox.information(self, tr("充值成功"), tr("支付成功，权益已到账！"))
 
     # ---- 数据刷新 ----
     def set_announcement(self, text: str):
@@ -1050,7 +1107,7 @@ class MainWindow(QMainWindow):
 
     def update_entitlement(self, e: dict):
         self.home.update_entitlement(e)
-        self.side_balance.setText(f"余额 ¥{e['money_yuan']}")
+        self.side_balance.setText(tr("余额") + f" ¥{e['money_yuan']}")
         self.side_user.setText(e.get("username", ""))
 
     def set_user(self, name: str):

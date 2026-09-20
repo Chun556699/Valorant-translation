@@ -15,6 +15,7 @@ class _NoWheel(QObject):
 
 import audio
 from hotkeys import HotkeyRecorder
+from i18n import tr
 
 _LANGS = [("zh", "中文"), ("en", "English"), ("ja", "日本語"), ("ko", "한국어"),
           ("ru", "Русский"), ("fr", "Français"), ("de", "Deutsch"),
@@ -49,13 +50,21 @@ class SettingsDialog(QDialog):
         self._form = form
         lay.addLayout(form)
 
+        # ---- 界面语言 ----
+        self.ui_lang = QComboBox()
+        self.ui_lang.addItem("中文", "zh")
+        self.ui_lang.addItem("English", "en")
+        self.ui_lang.setCurrentIndex(
+            0 if (cfg["ui_lang"] or "zh") == "zh" else 1)
+        form.addRow(tr("界面语言"), self.ui_lang)
+
         # ---- 运行模式 ----
         self.mode = QComboBox()
-        self.mode.addItem("直连 DashScope（个人测试，填自己的 Key）", "direct")
-        self.mode.addItem("计费服务器（发行版）", "server")
+        self.mode.addItem(tr("直连 DashScope（个人测试，填自己的 Key）"), "direct")
+        self.mode.addItem(tr("计费服务器（发行版）"), "server")
         self.mode.setCurrentIndex(0 if cfg["mode"] == "direct" else 1)
         self.mode.currentIndexChanged.connect(self._mode_changed)
-        form.addRow("运行模式", self.mode)
+        form.addRow(tr("运行模式"), self.mode)
 
         # ---- 直连参数 ----
         self.dash_key = QLineEdit(cfg["dash_key"])
@@ -69,31 +78,31 @@ class SettingsDialog(QDialog):
             ("模型名", self.dash_model),
         ]
         for label, w in self._direct_rows:
-            form.addRow(label, w)
+            form.addRow(tr(label), w)
 
         self.server_edit = QLineEdit(cfg["server_url"])
         self._server_row = self.server_edit
-        form.addRow("服务器地址", self.server_edit)
+        form.addRow(tr("服务器地址"), self.server_edit)
 
         # ---- 连接测试 ----
-        self.test_btn = QPushButton("测试连接")
+        self.test_btn = QPushButton(tr("测试连接"))
         self.test_btn.clicked.connect(self._test_conn)
         self.test_lbl = QLabel("")
         self.test_lbl.setWordWrap(True)
         trow = QHBoxLayout()
         trow.addWidget(self.test_btn)
         trow.addWidget(self.test_lbl, 1)
-        form.addRow("连通性", trow)
+        form.addRow(tr("连通性"), trow)
         self._mode_changed(self.mode.currentIndex())
 
         # ---- 热键 ----
         hk_row = QHBoxLayout()
         self.hk_lbl = QLabel(self._hk_text(cfg["hotkey"]))
-        rec = QPushButton("点击录入")
+        rec = QPushButton(tr("点击录入"))
         rec.clicked.connect(self._record_hotkey)
         hk_row.addWidget(self.hk_lbl, 1)
         hk_row.addWidget(rec)
-        form.addRow("自翻热键(按住说话)", hk_row)
+        form.addRow(tr("自翻热键(按住说话)"), hk_row)
 
         # ---- 目标语言 ----
         self.mate_target = QComboBox()
@@ -107,47 +116,47 @@ class SettingsDialog(QDialog):
         self.self_target.setCurrentIndex(
             max(0, [c for c, _ in _LANGS].index(cfg["target_self"]))
             if cfg["target_self"] in [c for c, _ in _LANGS] else 1)
-        form.addRow("队友语音翻译成", self.mate_target)
-        form.addRow("我的语音翻译成", self.self_target)
+        form.addRow(tr("队友语音翻译成"), self.mate_target)
+        form.addRow(tr("我的语音翻译成"), self.self_target)
 
         # ---- 音频设备 ----
         import pyaudiowpatch as pyaudio
         pa = pyaudio.PyAudio()
         self.mic_combo = QComboBox()
-        self.mic_combo.addItem("默认麦克风", None)
+        self.mic_combo.addItem(tr("默认麦克风"), None)
         for idx, name in audio.list_input_devices(pa):
             self.mic_combo.addItem(name, idx)
         self.lb_combo = QComboBox()
-        self.lb_combo.addItem("默认扬声器回环", None)
+        self.lb_combo.addItem(tr("默认扬声器回环"), None)
         for idx, name in audio.list_loopback_devices(pa):
             self.lb_combo.addItem(name, idx)
         self.out_combo = QComboBox()
-        self.out_combo.addItem("默认扬声器", None)
+        self.out_combo.addItem(tr("默认扬声器"), None)
         for idx, name in audio.list_output_devices(pa):
             self.out_combo.addItem(name, idx)
         pa.terminate()
         self._select_device(self.mic_combo, cfg["mic_device"])
         self._select_device(self.lb_combo, cfg["loopback_device"])
         self._select_device(self.out_combo, cfg["output_device"])
-        form.addRow("麦克风", self.mic_combo)
-        form.addRow("回环设备", self.lb_combo)
-        form.addRow("播报输出设备", self.out_combo)
+        form.addRow(tr("麦克风"), self.mic_combo)
+        form.addRow(tr("回环设备"), self.lb_combo)
+        form.addRow(tr("播报输出设备"), self.out_combo)
 
         # ---- 播报与复制 ----
-        self.play_audio = QCheckBox("播放译文声音（TTS 播报）")
+        self.play_audio = QCheckBox(tr("播放译文声音（TTS 播报）"))
         self.play_audio.setChecked(bool(cfg["play_audio"]))
         prow = QHBoxLayout()
         prow.addWidget(self.play_audio)
-        audition = QPushButton("试听播报")
+        audition = QPushButton(tr("试听播报"))
         audition.clicked.connect(self.test_audio.emit)
         prow.addWidget(audition)
         prow.addStretch(1)
         form.addRow("", prow)
-        self.auto_copy = QCheckBox("译文定稿后自动复制到剪贴板")
+        self.auto_copy = QCheckBox(tr("译文定稿后自动复制到剪贴板"))
         self.auto_copy.setChecked(bool(cfg["auto_copy"]))
         form.addRow("", self.auto_copy)
 
-        self.mate_filter = QCheckBox("队友流语音频段过滤（抑制枪声/脚步声噪声）")
+        self.mate_filter = QCheckBox(tr("队友流语音频段过滤（抑制枪声/脚步声噪声）"))
         self.mate_filter.setChecked(bool(cfg["mate_filter"]))
         form.addRow("", self.mate_filter)
 
@@ -161,29 +170,29 @@ class SettingsDialog(QDialog):
             lambda v: self.op_val.setText(f"{v}%"))
         op_row.addWidget(self.opacity, 1)
         op_row.addWidget(self.op_val)
-        form.addRow("悬浮窗不透明度", op_row)
+        form.addRow(tr("悬浮窗不透明度"), op_row)
 
         self.max_lines = QSpinBox()
         self.max_lines.setRange(3, 30)
         self.max_lines.setValue(int(cfg["max_bubbles"]))
-        form.addRow("最多保留条数", self.max_lines)
+        form.addRow(tr("最多保留条数"), self.max_lines)
 
-        self.through = QCheckBox("鼠标穿透悬浮窗（游戏中点不到字幕）")
+        self.through = QCheckBox(tr("鼠标穿透悬浮窗（游戏中点不到字幕）"))
         self.through.setChecked(bool(cfg["click_through"]))
         form.addRow("", self.through)
 
         # ---- 保存 ----
         btns = QHBoxLayout()
         if not embedded:
-            save = QPushButton("保存")
+            save = QPushButton(tr("保存"))
             save.clicked.connect(self._save)
-            cancel = QPushButton("取消")
+            cancel = QPushButton(tr("取消"))
             cancel.clicked.connect(self.reject)
             btns.addStretch(1)
             btns.addWidget(save)
             btns.addWidget(cancel)
         else:
-            hint = QLabel("✓ 改动即时生效，无需重启")
+            hint = QLabel(tr("✓ 改动即时生效，无需重启"))
             hint.setStyleSheet("color:#7a8494")
             btns.addStretch(1)
             btns.addWidget(hint)
@@ -200,7 +209,7 @@ class SettingsDialog(QDialog):
 
     def _wire_live_apply(self):
         """嵌入模式：任何控件变更立即保存并生效（无需点保存/重启）。"""
-        for w in (self.mode, self.mate_target, self.self_target,
+        for w in (self.mode, self.ui_lang, self.mate_target, self.self_target,
                   self.mic_combo, self.lb_combo, self.out_combo):
             w.currentIndexChanged.connect(lambda *_: self._apply())
         for w in (self.dash_key, self.dash_url, self.dash_model,
@@ -225,7 +234,7 @@ class SettingsDialog(QDialog):
         return f"{dev} · {hk.get('key', '')}"
 
     def _record_hotkey(self):
-        self.hk_lbl.setText("请按下按键或鼠标键…")
+        self.hk_lbl.setText(tr("请按下按键或鼠标键…"))
         self._recorder = HotkeyRecorder(self._captured.emit)
         self._recorder.start()
 
@@ -240,7 +249,7 @@ class SettingsDialog(QDialog):
         """后台线程测试连通性，测的是输入框当前的值（不要求先保存）。"""
         self.test_btn.setEnabled(False)
         self.test_lbl.setStyleSheet("color:#888")
-        self.test_lbl.setText("测试中…")
+        self.test_lbl.setText(tr("测试中…"))
         args = (self.mode.currentData(),
                 self.dash_key.text().strip(),
                 self.dash_url.text().strip().rstrip("/"),
@@ -274,7 +283,7 @@ class SettingsDialog(QDialog):
                             ev = json.loads(raw)
                             t = ev.get("type")
                             if t in ("session.created", "session.updated"):
-                                return True, f"连接成功（{t}）"
+                                return True, tr("连接成功") + f"({t})"
                             if t == "error" or ev.get("code"):
                                 msg = (ev.get("error") or {}).get("message") \
                                     or str(ev)[:200]
@@ -318,6 +327,7 @@ class SettingsDialog(QDialog):
     def _apply(self):
         """把控件值写入 cfg 并落盘，emit saved 让主程序即时应用。"""
         c = self.cfg
+        c["ui_lang"] = self.ui_lang.currentData()
         c["mode"] = self.mode.currentData()
         c["dash_key"] = self.dash_key.text().strip()
         c["dash_ws_url"] = self.dash_url.text().strip().rstrip("/")

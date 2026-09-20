@@ -1,5 +1,6 @@
 """悬浮翻译窗：无边框/置顶/半透明，队友与自己语音的原文+译文双语气泡。"""
 from PySide6.QtCore import Qt, Signal, QPoint, QTimer
+from i18n import tr
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                QPushButton, QScrollArea, QFrame,
@@ -17,9 +18,10 @@ def _color_for(name: str) -> str:
 
 
 class Bubble(QFrame):
-    """一条发言：说话人 + 原文(灰) + 译文(亮)"""
+    """一条发言：说话人 + 原文 + 译文（颜色可在设置里自定义）"""
 
-    def __init__(self, speaker: str, parent=None):
+    def __init__(self, speaker: str, src_color="#bbbbbb",
+                 dst_color="#ffffff", parent=None):
         super().__init__(parent)
         self.setObjectName("bubble")
         lay = QVBoxLayout(self)
@@ -30,13 +32,17 @@ class Bubble(QFrame):
             f"color:{_color_for(speaker)}; font-weight:bold; font-size:12px;")
         self.src_lbl = QLabel("")
         self.src_lbl.setWordWrap(True)
-        self.src_lbl.setStyleSheet("color:#bbbbbb; font-size:12px;")
         self.dst_lbl = QLabel("")
         self.dst_lbl.setWordWrap(True)
-        self.dst_lbl.setStyleSheet("color:#ffffff; font-size:14px; font-weight:600;")
         lay.addWidget(self.speaker_lbl)
         lay.addWidget(self.src_lbl)
         lay.addWidget(self.dst_lbl)
+        self.set_colors(src_color, dst_color)
+
+    def set_colors(self, src: str, dst: str):
+        self.src_lbl.setStyleSheet(f"color:{src}; font-size:12px;")
+        self.dst_lbl.setStyleSheet(
+            f"color:{dst}; font-size:14px; font-weight:600;")
 
     def set_text(self, src: str, dst: str):
         self.src_lbl.setText(src)
@@ -110,19 +116,19 @@ class Overlay(QWidget):
         self.mate_btn = QPushButton()
         self.mate_btn.setCheckable(True)
         self.mate_btn.setChecked(bool(cfg["mate_enabled"]))
-        self.mate_btn.setText("队友✓" if cfg["mate_enabled"] else "队友✗")
+        self.mate_btn.setText(tr("队友✓") if cfg["mate_enabled"] else tr("队友✗"))
         self.mate_btn.toggled.connect(self._on_mate_toggle)
-        self.pin_btn = QPushButton("穿透")
+        self.pin_btn = QPushButton(tr("穿透"))
         self.pin_btn.setCheckable(True)
         self.pin_btn.setChecked(self._click_through)
         self.pin_btn.toggled.connect(self._on_pin_toggle)
         self.fold_btn = QPushButton("—")
         self.fold_btn.setCheckable(True)
-        self.fold_btn.setToolTip("收起为顶栏 / 展开")
+        self.fold_btn.setToolTip(tr("收起为顶栏 / 展开"))
         self.fold_btn.toggled.connect(self._on_fold)
-        buttons = [("设置", self.open_settings.emit)]
+        buttons = [(tr("设置"), self.open_settings.emit)]
         if cfg["mode"] != "direct":   # 直连模式没有充值概念
-            buttons.insert(0, ("充值", self.open_recharge.emit))
+            buttons.insert(0, (tr("充值"), self.open_recharge.emit))
         for text, fn in buttons:
             b = QPushButton(text)
             b.clicked.connect(fn)
@@ -188,7 +194,7 @@ class Overlay(QWidget):
         self.show()
 
     def _on_mate_toggle(self, on: bool):
-        self.mate_btn.setText("队友✓" if on else "队友✗")
+        self.mate_btn.setText(tr("队友✓") if on else tr("队友✗"))
         self.cfg["mate_enabled"] = on
         self.cfg.save()
         self.toggle_mate.emit(on)
@@ -253,7 +259,8 @@ class Overlay(QWidget):
                 seg["open"] = False
             return
         if seg is None or not seg["open"]:
-            bubble = Bubble(name)
+            bubble = Bubble(name, self.cfg["overlay_src_color"],
+                            self.cfg["overlay_dst_color"])
             self._list.insertWidget(self._list.count() - 1, bubble)
             self._bubbles.append(bubble)
             seg = {"bubble": bubble, "src": "", "dst": "", "open": True}
@@ -277,6 +284,12 @@ class Overlay(QWidget):
         if seg.get("src_done") and seg.get("dst_done"):
             seg["open"] = False
         self._autoscroll()
+
+    def set_text_colors(self):
+        """设置改了文字颜色 → 现有气泡一起换。"""
+        for b in self._bubbles:
+            b.set_colors(self.cfg["overlay_src_color"],
+                         self.cfg["overlay_dst_color"])
 
     def _trim(self):
         limit = int(self.cfg["max_bubbles"])

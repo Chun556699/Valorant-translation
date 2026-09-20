@@ -13,7 +13,7 @@ class LoginDialog(QDialog):
         self.api = api
         self.cfg = cfg
         self.user_info = None
-        self.setWindowTitle("VTranslate 登录")
+        self.setWindowTitle("VTranslate " + tr("登录"))
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
         self.setMinimumWidth(360)
         self.setModal(True)

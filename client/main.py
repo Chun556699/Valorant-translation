@@ -21,8 +21,10 @@ from PySide6.QtWidgets import (QApplication, QSystemTrayIcon, QMenu,
                                QMessageBox, QStyle)
 
 import audio
+import i18n
 import valorant_terms
 from config import Config
+from i18n import tr
 from direct import DashScopeDirect, DEFAULT_WS_URL, DEFAULT_MODEL
 from history import History
 from hotkeys import PTTListener
@@ -481,6 +483,7 @@ class App:
     def _apply_overlay_cfg(self):
         self.overlay._apply_opacity()
         self.overlay._on_pin_toggle(self.cfg["click_through"])
+        self.overlay.set_text_colors()
 
     def show_settings(self):
         """设置已内嵌在主窗导航页——直接弹出主窗并切过去。"""
@@ -504,6 +507,17 @@ class App:
         if pa_on and not self.player._running:
             self.player.start()
 
+        # 界面语言变化 → 需要重启重渲染所有文案
+        if self.cfg["ui_lang"] != i18n.lang():
+            ret = QMessageBox.question(
+                self.win, "Language changed",
+                "界面语言更改需重启生效。\nLanguage change needs a restart. "
+                "Restart now?",
+                QMessageBox.Yes | QMessageBox.No)
+            if ret == QMessageBox.Yes:
+                self._restart_app()
+            return
+
         # 影响会话的键变了才重建翻译通道
         snap = {k: self.cfg[k] for k in self._RELAY_KEYS}
         if snap == self._relay_snap:
@@ -511,8 +525,8 @@ class App:
         self._relay_snap = snap
         if snap["mode"] == "direct" != self._direct:
             ret = QMessageBox.question(
-                self.win, "运行模式已切换",
-                "直连/服务器模式切换需要重启客户端。\n现在立即重启？",
+                self.win, tr("运行模式已切换"),
+                tr("直连/服务器模式切换需要重启客户端。\n现在立即重启？"),
                 QMessageBox.Yes | QMessageBox.No)
             if ret == QMessageBox.Yes:
                 self._restart_app()
@@ -594,25 +608,25 @@ class App:
         icon = self._tray_icon()
         tray.setIcon(icon)
         self.win.setWindowIcon(icon)   # 任务栏也用同一图标
-        tray.setToolTip("VTranslate 语音翻译")
+        tray.setToolTip("VTranslate")
 
         menu = QMenu()
-        self._act_run = QAction("开始翻译")
+        self._act_run = QAction(tr("开始翻译"))
         self._act_run.triggered.connect(
             lambda: self.set_running(not self.running))
-        self._act_ov = QAction("显示字幕窗")
+        self._act_ov = QAction(tr("显示字幕窗"))
         self._act_ov.setCheckable(True)
         self._act_ov.triggered.connect(
             lambda on: self.overlay.show() if on else self.overlay.hide())
-        self._act_through = QAction("字幕穿透")
+        self._act_through = QAction(tr("字幕穿透"))
         self._act_through.setCheckable(True)
         self._act_through.triggered.connect(
             lambda on: self.overlay._on_pin_toggle(on))
-        act_main = QAction("打开主窗口")
+        act_main = QAction(tr("打开主窗口"))
         act_main.triggered.connect(self._raise_main)
-        act_settings = QAction("设置")
+        act_settings = QAction(tr("设置"))
         act_settings.triggered.connect(self.show_settings)
-        act_quit = QAction("退出")
+        act_quit = QAction(tr("退出"))
         act_quit.triggered.connect(app.quit)
         for a in (act_main, self._act_run, self._act_ov, self._act_through):
             menu.addAction(a)
@@ -622,7 +636,8 @@ class App:
         menu.addAction(act_quit)
 
         def _sync():
-            self._act_run.setText("停止翻译" if self.running else "开始翻译")
+            self._act_run.setText(
+                tr("停止翻译") if self.running else tr("开始翻译"))
             self._act_ov.setChecked(self.overlay.isVisible())
             self._act_through.setChecked(self.cfg["click_through"])
         menu.aboutToShow.connect(_sync)
@@ -692,6 +707,15 @@ def main():
 
     from main_window import APP_QSS
     app.setStyleSheet(APP_QSS)
+
+    # 启动时选界面语言（首次；之后可在设置里改）
+    _cfg = Config()
+    if not _cfg["ui_lang"]:
+        dlg = i18n.LanguageDialog()
+        if dlg.exec():
+            _cfg["ui_lang"] = dlg.selected()
+            _cfg.save()
+    i18n.set_lang(_cfg["ui_lang"] or "zh")
 
     a = App()
     a._single_srv = _listen_single(a)   # 防 GC
