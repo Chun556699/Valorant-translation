@@ -68,15 +68,35 @@ function createMain() {
 }
 
 /* ---------- 托盘 ---------- */
+const trayState = { running: false, through: false, ovVisible: true };
+ipcMain.on('tray:state', (_e, s) => Object.assign(trayState, s));
+
+function buildTrayMenu() {
+  return Menu.buildFromTemplate([
+    { label: '打开主窗口',
+      click: () => { if (mainWin) { mainWin.show(); mainWin.focus(); } } },
+    { label: trayState.running ? '停止翻译' : '开始翻译',
+      click: () => send('tray', 'toggle-run') },
+    { type: 'separator' },
+    { label: '显示字幕窗', type: 'checkbox', checked: trayState.ovVisible,
+      click: () => send('tray', 'toggle-overlay') },
+    { label: '字幕穿透', type: 'checkbox', checked: trayState.through,
+      click: () => send('tray', 'toggle-through') },
+    { type: 'separator' },
+    { label: '设置',
+      click: () => {
+        if (mainWin) { mainWin.show(); mainWin.focus(); }
+        send('tray', 'open-settings');
+      } },
+    { label: '退出', click: () => { app.isQuitting = true; app.quit(); } },
+  ]);
+}
+
 function createTray() {
   tray = new Tray(path.join(__dirname, '..', 'assets', 'icon.png'));
   tray.setToolTip('VTranslate');
-  const menu = Menu.buildFromTemplate([
-    { label: '打开主窗口', click: () => mainWin && (mainWin.show(), mainWin.focus()) },
-    { type: 'separator' },
-    { label: '退出', click: () => { app.isQuitting = true; app.quit(); } },
-  ]);
-  tray.setContextMenu(menu);
+  tray.setContextMenu(buildTrayMenu());
+  tray.on('right-click', () => tray.setContextMenu(buildTrayMenu())); // 动态刷新
   tray.on('double-click', () => mainWin && (mainWin.show(), mainWin.focus()));
 }
 

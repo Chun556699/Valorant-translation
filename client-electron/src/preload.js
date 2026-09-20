@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('api', {
   toOverlay: (ch, payload) => ipcRenderer.send('ov', ch, payload),
   overlayCtl: (action) => ipcRenderer.send('ovctl', action),
   relaunch: () => ipcRenderer.send('app:relaunch'),
+  trayState: (s) => ipcRenderer.send('tray:state', s),
   sessionStart: (stream, cfg) => ipcRenderer.send('session:start', { stream, cfg }),
   sessionStop: (stream) => ipcRenderer.send('session:stop', stream),
   sessionAudio: (stream, b64) => ipcRenderer.send('session:audio', { stream, b64 }),

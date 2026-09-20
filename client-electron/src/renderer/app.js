@@ -45,6 +45,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   api.on('ovctl', onOverlayCtl);
   api.on('hotkey-invalid', () =>
     toast('热键未识别，请到设置页重新录入'));
+  api.on('tray', onTrayAction);
+  pushTrayState();
   setStatus('就绪');
   refreshChips();
 });
@@ -107,6 +109,22 @@ function refreshChips() {
     `队友→${cfg().target_mate} · 按住${dev}${kn}自翻→${cfg().target_self} · ${cfg().play_audio ? '播报译文' : '仅文本'}`;
 }
 
+let _ovVisible = true;
+function pushTrayState() {
+  api.trayState({ running: state.running, through: cfg().click_through,
+                  ovVisible: _ovVisible });
+}
+function onTrayAction(a) {
+  if (a === 'toggle-run') setRunning(!state.running);
+  else if (a === 'toggle-overlay') { _ovVisible = !_ovVisible; api.overlayShow(_ovVisible); pushTrayState(); }
+  else if (a === 'toggle-through') {
+    cfgSet({ click_through: !cfg().click_through }).then(() => {
+      api.overlayThrough(cfg().click_through); pushTrayState();
+    });
+  }
+  else if (a === 'open-settings') switchPage('settings');
+}
+
 function setRunning(on) {
   state.running = on;
   $('btnRun').textContent = on ? tr('停止翻译') : tr('开始翻译');
@@ -117,6 +135,7 @@ function setRunning(on) {
   cfgSet({ running: on });
   if (on) startSessions(); else stopSessions();
   setStatus(on ? '翻译中' : '就绪');
+  pushTrayState();
 }
 
 async function startSessions() {
@@ -231,9 +250,10 @@ function onOverlayCtl(a) {
     api.toOverlay('mate-state', state.mateOn);
     if (state.running) { state.mateOn ? api.sessionStart('mate', cfg()) : api.sessionStop('mate'); }
   } else if (a === 'pin') {
-    cfgSet({ click_through: !cfg().click_through }).then(() =>
-      api.overlayThrough(cfg().click_through));
-  } else if (a === 'hide') api.overlayShow(false);
+    cfgSet({ click_through: !cfg().click_through }).then(() => {
+      api.overlayThrough(cfg().click_through); pushTrayState();
+    });
+  } else if (a === 'hide') { _ovVisible = false; api.overlayShow(false); pushTrayState(); }
 }
 function pushOverlayCfg() {
   api.toOverlay('cfg', {
@@ -247,12 +267,12 @@ function setStatus(s) { api.toOverlay('status', s); }
 
 /* ================= 字幕页 ================= */
 function initSubtitle() {
-  $('btnOvShow').onclick = () => api.overlayShow(true);
+  $('btnOvShow').onclick = () => { _ovVisible = true; api.overlayShow(true); pushTrayState(); };
   const syncPin = () => { $('btnThrough').textContent = tr(cfg().click_through ? '穿透: 开' : '穿透: 关'); };
   syncPin();
   $('btnThrough').onclick = async () => {
     await cfgSet({ click_through: !cfg().click_through });
-    api.overlayThrough(cfg().click_through); syncPin();
+    api.overlayThrough(cfg().click_through); syncPin(); pushTrayState();
   };
   $('ovOpacity').value = Math.round(cfg().overlay_opacity * 100) + '%';
   $('ovOpacity').onchange = async () => {
