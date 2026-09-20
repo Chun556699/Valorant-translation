@@ -15,7 +15,8 @@ import time
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QMessageBox
+from PySide6.QtWidgets import (QApplication, QSystemTrayIcon, QMenu,
+                               QMessageBox, QStyle)
 
 import audio
 from config import Config
@@ -378,8 +379,7 @@ class App:
     # ================= 托盘 =================
     def _make_tray(self, app):
         tray = QSystemTrayIcon(self.win)
-        tray.setIcon(self.win.style().standardIcon(
-            self.win.style().SP_MediaPlay))
+        tray.setIcon(self.win.style().standardIcon(QStyle.SP_MediaPlay))
         tray.setToolTip("VTranslate 语音翻译")
         menu = QMenu()
         show_main = QAction("主窗口")
