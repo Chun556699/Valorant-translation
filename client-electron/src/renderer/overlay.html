@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><style>
+* { box-sizing: border-box; margin: 0; padding: 0;
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui; }
+html, body { height: 100%; background: transparent; overflow: hidden; }
+#wrap { display: flex; flex-direction: column; height: 100vh;
+  border-radius: 10px; overflow: hidden;
+  background: rgba(20, 20, 26, .55); backdrop-filter: blur(6px); }
+#bar { display: flex; align-items: center; gap: 8px; height: 26px;
+  padding: 0 8px; background: rgba(0,0,0,.35);
+  -webkit-app-region: drag; user-select: none; flex: none; }
+#bar .dot { width: 8px; height: 8px; border-radius: 50%; }
+#mateDot { background: #2fae66; opacity: 0; transition: opacity .15s; }
+#mateDot.on { opacity: 1; animation: pulse .9s infinite alternate; }
+#pttDot { background: #ff4655; opacity: 0; }
+#pttDot.on { opacity: 1; animation: pulse .35s infinite alternate; }
+@keyframes pulse { to { opacity: .35; } }
+#status { font-size: 10.5px; color: #cfd4dc; flex: 1; overflow: hidden;
+  white-space: nowrap; text-overflow: ellipsis; }
+.bbtn { -webkit-app-region: no-drag; border: 0; background: rgba(255,255,255,.12);
+  color: #dde2ea; font-size: 10.5px; padding: 2px 8px; border-radius: 5px;
+  cursor: pointer; }
+.bbtn:hover { background: rgba(255,255,255,.25); }
+#list { flex: 1; overflow-y: auto; padding: 6px 8px;
+  display: flex; flex-direction: column; gap: 6px; }
+#list::-webkit-scrollbar { width: 4px; }
+#list::-webkit-scrollbar-thumb { background: rgba(255,255,255,.25); border-radius: 99px; }
+.bubble { padding: 2px 2px 6px; border-bottom: 1px solid rgba(255,255,255,.07); }
+.bubble:last-child { border-bottom: 0; }
+.b-who { font-weight: 700; font-size: 12px; margin-bottom: 1px; }
+.b-src { font-size: 12px; word-wrap: break-word; }
+.b-dst { font-size: 14px; font-weight: 600; word-wrap: break-word; }
+body.folded #list { display: none; }
+body.folded #wrap { height: 26px; }
+</style></head>
+<body>
+<div id="wrap">
+  <div id="bar">
+    <div class="dot" id="pttDot"></div>
+    <div class="dot" id="mateDot"></div>
+    <div id="status">就绪</div>
+    <button class="bbtn" id="btnMate">队友✓</button>
+    <button class="bbtn" id="btnPin">穿透</button>
+    <button class="bbtn" id="btnFold" title="收起">—</button>
+    <button class="bbtn" id="btnHide">✕</button>
+  </div>
+  <div id="list"></div>
+</div>
+<script src="overlay.js"></script>
+</body>
+</html>

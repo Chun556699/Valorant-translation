@@ -22,3 +22,6 @@ dist/
 # 系统
 Thumbs.db
 .DS_Store
+client-electron/node_modules/
+client-electron/dist/
+client-electron/*.spec

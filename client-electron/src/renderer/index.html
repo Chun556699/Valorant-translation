@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+  <!-- 标题栏 -->
+  <div id="titlebar">
+    <div class="tb-logo">V</div>
+    <div class="tb-title">VTranslate</div>
+    <div class="tb-dot" id="tbDot"></div>
+    <div class="tb-spacer"></div>
+    <button class="tb-btn" id="btnMin">—</button>
+    <button class="tb-btn tb-close" id="btnClose">✕</button>
+  </div>
+
+  <div id="body">
+    <!-- 侧栏 -->
+    <nav id="side">
+      <button class="nav on" data-p="home"><span>🎧</span><i data-t="翻译">翻译</i></button>
+      <button class="nav" data-p="subtitle"><span>🪟</span><i data-t="字幕">字幕</i></button>
+      <button class="nav" data-p="test"><span>🎹</span><i data-t="测试">测试</i></button>
+      <button class="nav" data-p="history"><span>📜</span><i data-t="记录">记录</i></button>
+      <button class="nav" data-p="tutorial"><span>📖</span><i data-t="教程">教程</i></button>
+      <button class="nav" data-p="settings"><span>⚙</span><i data-t="设置">设置</i></button>
+      <div class="side-foot">
+        <div class="side-bal" id="sideBal">本地直连</div>
+      </div>
+    </nav>
+
+    <!-- 页面 -->
+    <main id="pages">
+      <!-- 翻译页 -->
+      <section class="page on" id="pg-home">
+        <div class="card">
+          <div class="card-head"><b data-t="翻译">翻译</b><span class="pill" id="homePill">直连 · 就绪</span></div>
+          <div class="chips" id="homeChips"></div>
+          <div class="home-status" id="homeStatus">准备就绪</div>
+          <button class="btn-primary big" id="btnRun">开始翻译</button>
+          <div class="hint" data-t="队友语音自动翻译；按住热键翻译自己的语音">队友语音自动翻译；按住热键翻译自己的语音</div>
+        </div>
+        <div class="card">
+          <div class="card-head"><b data-t="当前音色">当前音色</b></div>
+          <div class="row">
+            <select id="voiceSel" class="input"><option>Cherry</option></select>
+            <label class="switch"><input type="checkbox" id="playAudio" checked><span class="sl"></span><em data-t="播报译文">播报译文</em></label>
+          </div>
+        </div>
+      </section>
+
+      <!-- 字幕页 -->
+      <section class="page" id="pg-subtitle">
+        <div class="card">
+          <div class="card-head"><b data-t="字幕悬浮窗">字幕悬浮窗</b></div>
+          <div class="row">
+            <button class="btn" id="btnOvShow" data-t="显示/隐藏字幕窗">显示/隐藏字幕窗</button>
+            <button class="btn" id="btnThrough">穿透: 关</button>
+            <label class="row-item"><span data-t="不透明度">不透明度</span>
+              <select id="ovOpacity" class="input sm"><option>40%</option><option>55%</option><option>70%</option><option selected>85%</option><option>100%</option></select>
+            </label>
+          </div>
+          <div class="hint" data-t="提示：开启穿透后游戏中鼠标点击会直接穿过字幕，可在托盘菜单重新打开设置。">提示：开启穿透后游戏中鼠标点击会直接穿过字幕，可在托盘菜单重新打开设置。</div>
+        </div>
+        <div class="card">
+          <div class="card-head"><b data-t="预览">预览</b></div>
+          <div class="ov-preview" id="ovPreview">
+            <div class="pv-speaker">好友1</div>
+            <div class="pv-src" id="pvSrc">Cover me, I'm planting the spike</div>
+            <div class="pv-dst" id="pvDst">掩护我，我在下包</div>
+          </div>
+          <div class="row">
+            <label class="row-item"><span data-t="原文颜色">原文颜色</span><input type="color" id="srcColor" value="#bbbbbb" class="swatch"></label>
+            <label class="row-item"><span data-t="译文颜色">译文颜色</span><input type="color" id="dstColor" value="#ffffff" class="swatch"></label>
+          </div>
+        </div>
+      </section>
+
+      <!-- 测试页 -->
+      <section class="page" id="pg-test">
+        <div class="card">
+          <div class="card-head"><b data-t="按键与麦克风测试">按键与麦克风测试</b></div>
+          <div class="lamp" id="pttLamp"><span data-t="按住绑定的热键说话">按住绑定的热键说话</span></div>
+          <div class="meters">
+            <div class="meter-row"><span data-t="麦克风">麦克风</span><div class="meter"><div class="meter-fill" id="micBar"></div></div></div>
+            <div class="meter-row"><span data-t="队友回环">队友回环</span><div class="meter"><div class="meter-fill mate" id="mateBar"></div></div></div>
+          </div>
+          <div class="row">
+            <button class="btn-primary" id="btnTestSelf" data-t="开始测试（拉起自翻通道）">开始测试（拉起自翻通道）</button>
+            <span class="ch-status" id="chStatus"></span>
+          </div>
+          <div class="hint" data-t="说明：测试模式下按住热键说话，松开后悬浮窗会显示译文；电平条验证采集是否正常。热键在「设置」页录入。">说明：测试模式下按住热键说话，松开后悬浮窗会显示译文；电平条验证采集是否正常。热键在「设置」页录入。</div>
+        </div>
+      </section>
+
+      <!-- 记录页 -->
+      <section class="page" id="pg-history">
+        <div class="card grow">
+          <div class="card-head"><b data-t="翻译记录">翻译记录</b><button class="btn sm" id="btnClearHist" data-t="清空">清空</button></div>
+          <div class="hist" id="histList"></div>
+        </div>
+      </section>
+
+      <!-- 教程页 -->
+      <section class="page" id="pg-tutorial">
+        <div class="card grow"><pre class="tutorial" id="tutorialText"></pre></div>
+      </section>
+
+      <!-- 设置页 -->
+      <section class="page" id="pg-settings">
+        <div class="card grow" id="settingsCard">
+          <div class="form" id="settingsForm">
+            <label class="frow"><span data-t="界面语言">界面语言</span>
+              <select id="sUiLang" class="input"><option value="zh">中文</option><option value="en">English</option></select></label>
+            <label class="frow"><span data-t="运行模式">运行模式</span>
+              <select id="sMode" class="input"><option value="direct">直连 DashScope（个人测试）</option><option value="server">计费服务器（发行版）</option></select></label>
+            <div class="direct-only">
+              <label class="frow"><span>API Key</span><input id="sKey" class="input" type="password" placeholder="sk-xxxx"></label>
+              <label class="frow"><span data-t="模型地址">模型地址</span><input id="sUrl" class="input"></label>
+              <label class="frow"><span data-t="模型名">模型名</span><input id="sModel" class="input"></label>
+            </div>
+            <label class="frow srv-only" style="display:none"><span data-t="服务器地址">服务器地址</span><input id="sServer" class="input"></label>
+            <div class="frow"><span data-t="连通性">连通性</span>
+              <button class="btn" id="btnTestConn" data-t="测试连接">测试连接</button>
+              <span class="conn-res" id="connRes"></span></div>
+            <label class="frow"><span data-t="自翻热键(按住说话)">自翻热键(按住说话)</span>
+              <button class="btn" id="btnRecKey" data-t="点击录入">点击录入</button>
+              <span class="conn-res" id="hkLabel"></span></label>
+            <label class="frow"><span data-t="队友语音翻译成">队友语音翻译成</span>
+              <select id="sTargetMate" class="input"><option value="zh">中文</option><option value="en">English</option><option value="ja">日本語</option></select></label>
+            <label class="frow"><span data-t="我的语音翻译成">我的语音翻译成</span>
+              <select id="sTargetSelf" class="input"><option value="zh">中文</option><option value="en">English</option><option value="ja">日本語</option></select></label>
+            <label class="frow"><span data-t="麦克风">麦克风</span><select id="sMic" class="input"></select></label>
+            <label class="frow"><span data-t="播报输出设备">播报输出设备</span><select id="sOut" class="input"></select></label>
+            <label class="frow chk"><input type="checkbox" id="sPlayAudio" checked><span data-t="播放译文声音（TTS 播报）">播放译文声音（TTS 播报）</span>
+              <button class="btn sm" id="btnBeep" data-t="试听播报">试听播报</button></label>
+            <label class="frow chk"><input type="checkbox" id="sAutoCopy"><span data-t="译文定稿后自动复制到剪贴板">译文定稿后自动复制到剪贴板</span></label>
+            <label class="frow chk"><input type="checkbox" id="sMateFilter" checked><span data-t="队友流语音频段过滤（抑制枪声/脚步声噪声）">队友流语音频段过滤（抑制枪声/脚步声噪声）</span></label>
+            <label class="frow"><span data-t="悬浮窗不透明度">悬浮窗不透明度</span><input type="range" id="sOpacity" min="30" max="100" value="85"><span class="conn-res" id="opVal">85%</span></label>
+            <label class="frow"><span data-t="最多保留条数">最多保留条数</span><input type="number" id="sMaxLines" class="input sm" min="1" max="30" value="8"></label>
+            <label class="frow chk"><input type="checkbox" id="sThrough"><span data-t="鼠标穿透悬浮窗（游戏中点不到字幕）">鼠标穿透悬浮窗（游戏中点不到字幕）</span></label>
+            <div class="frow note" data-t="✓ 改动即时生效">✓ 改动即时生效</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 联系页 -->
+      <section class="page" id="pg-contact">
+        <div class="card"><pre class="tutorial" id="contactText"></pre></div>
+      </section>
+    </main>
+  </div>
+</div>
+<div id="toast"></div>
+<script src="i18n.js"></script>
+<script src="terms.js"></script>
+<script src="store.js"></script>
+<script src="audio.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
