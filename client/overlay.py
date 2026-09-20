@@ -59,7 +59,7 @@ class Overlay(QWidget):
                             | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
-        self.resize(380, 260)
+        self.resize(340, 230)
         self._drag_pos: QPoint | None = None
         self._click_through = bool(cfg["click_through"])
 

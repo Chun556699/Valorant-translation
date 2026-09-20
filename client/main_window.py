@@ -815,8 +815,12 @@ class _TitleBar(QFrame):
         self._drag = None
 
     def mouseDoubleClickEvent(self, _):
-        self._win.showNormal() if self._win.isMaximized() \
-            else self._win.showMaximized()
+        if self._win.isMaximized():
+            self._win.showNormal()
+        else:
+            # 无边框窗最大化会盖住任务栏，手动限制在可用区域内
+            self._win.setGeometry(
+                QApplication.primaryScreen().availableGeometry())
 
 
 # ================= 主窗 =================
@@ -841,10 +845,12 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.cfg = cfg
         self.api = api
+        self._tray_ref = None     # main.py 注入，用于气泡提示
         self._direct = cfg["mode"] == "direct"
         self.setWindowTitle("VTranslate")
-        self.resize(760, 480)
-        self.setMinimumSize(660, 420)
+        self.resize(700, 440)
+        self.setMinimumSize(580, 380)
+        self.setWindowState(Qt.WindowNoState)   # 防止被记住为最大化/全屏
         # 无边框 + 圆角
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -989,6 +995,18 @@ class MainWindow(QMainWindow):
 
     def set_conn(self, running: bool):
         self.titlebar.set_active(running)
+
+    # 关闭主窗 = 最小化到托盘（程序在后台继续跑，右键托盘图标退出）
+    def closeEvent(self, e):
+        e.ignore()
+        self.hide()
+        try:
+            tray = self._tray_ref() if callable(self._tray_ref) else None
+        except Exception:
+            tray = None
+        if tray:
+            tray.showMessage("VTranslate", "已最小化到托盘，右键托盘图标可退出",
+                             tray.icon(), 2500)
 
     def switch(self, idx: int):
         self.pages.setCurrentIndex(idx)

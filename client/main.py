@@ -539,9 +539,13 @@ class App:
             if r == QSystemTrayIcon.Trigger else None)
         tray.show()
         self.tray = tray
+        self.win._tray_ref = lambda: tray
 
     def _raise_main(self):
-        self.win.show()
+        if self.win.isMinimized():
+            self.win.showNormal()
+        else:
+            self.win.show()
         self.win.raise_()
         self.win.activateWindow()
 
