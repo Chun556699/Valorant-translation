@@ -27,11 +27,20 @@ function deepFindSpeaker(obj) {
   return null;
 }
 
-function sessionConfig(target, voice, wantAudio, stream, phrases) {
-  // mate 连续流用 speaker_detection；self 按住说话用 Manual(null)+commit
-  const turn = stream === "self" ? null : {
-    type: "speaker_detection", threshold: 0.5, silence_duration_ms: 1000,
-  };
+function errText(ev) {
+  /* DashScope error 事件 -> 可读文案 */
+  const e = ev.error || ev;
+  const t = e.type || ev.code || "error";
+  const m = e.message || ev.message || "";
+  return m ? `[${t}] ${m}` : JSON.stringify(ev).slice(0, 200);
+}
+
+function sessionConfig(target, voice, wantAudio, stream, phrases, manual) {
+  // mate 连续流用 speaker_detection；self 按住说话用 Manual(null)+commit；
+  // manual=false 是兜底档（端点若拒 null 则退回自动断句）
+  const auto = { type: "speaker_detection", threshold: 0.5,
+                 silence_duration_ms: 1000 };
+  const turn = (stream === "self" && manual !== false) ? null : auto;
   const translation = { language: target };
   if (phrases && Object.keys(phrases).length)
     translation.corpus = { phrases };
@@ -76,21 +85,50 @@ class DirectSession {
     let backoff = 1;
     while (!this._stop) {
       this._state("connecting");
-      try {
-        await this._connectOnce(this.phrases);
-      } catch (e) {
-        if (e === "RETRY_NO_PHRASES" && this.phrases) {
-          this.phrases = null;
-          console.log(`[${this.stream}] 端点不支持热词，降级重连`);
-          try { await this._connectOnce(null); }
-          catch (e2) { this._connErr(e2); }
-        } else this._connErr(e);
+      // 降级链：完整配置 -> 去热词 -> 去音色 -> 纯文本（哪个被拒就降级）
+      const tiers = [
+        { phrases: this.phrases, voice: this.voice, audio: this.wantAudio },
+        { phrases: null,         voice: this.voice, audio: this.wantAudio },
+        { phrases: null,         voice: "",         audio: this.wantAudio },
+        { phrases: null,         voice: "",         audio: false },
+        { phrases: null,         voice: "",         audio: false,
+          manual: false },   // 兜底：self 流退回自动断句
+      ];
+      let ok = false;
+      for (const t of tiers) {
+        try {
+          await this._connectOnce(t);
+          ok = true;
+          break;
+        } catch (e) {
+          if (e === "WS_CLOSED") break;   // 正常断开
+          const msg = String(e && e.message || e);
+          if (/corpus|phrases/i.test(msg) && t.phrases) {
+            this._ev({ type: "error", code: "fallback",
+                      msg: "端点不支持术语热词，已降级" });
+            continue;
+          }
+          if (/voice|output|modalit/i.test(msg) && (t.voice || t.audio)) {
+            this._ev({ type: "error", code: "fallback",
+                      msg: "端点拒绝音色/音频输出，已降级" });
+            continue;
+          }
+          if (/turn_detection/i.test(msg) && t.manual !== false) {
+            this._ev({ type: "error", code: "fallback",
+                      msg: "端点不支持手动断句，已切自动断句" });
+            continue;
+          }
+          this._connErr(msg);   // 其他错误：报出来，退出重试
+          break;
+        }
       }
       this.ready = false;
       if (this._stop) break;
-      this._state("reconnecting");
-      await new Promise(r => setTimeout(r, Math.min(backoff, 15) * 1000));
-      backoff = Math.min(backoff * 2, 15);
+      if (!ok) {
+        this._state("reconnecting");
+        await new Promise(r => setTimeout(r, Math.min(backoff, 15) * 1000));
+        backoff = Math.min(backoff * 2, 15);
+      }
     }
   }
 
@@ -99,7 +137,7 @@ class DirectSession {
                msg: String(e && e.message || e).slice(0, 300) });
   }
 
-  _connectOnce(phrases) {
+  _connectOnce(tier) {
     return new Promise((resolve, reject) => {
       let settled = false, handshakeDone = false;
       const ws = new WebSocket(this.url, {
@@ -109,7 +147,8 @@ class DirectSession {
       this.ws = ws;
       ws.on("open", () => {
         ws.send(JSON.stringify(sessionConfig(
-          this.target, this.voice, this.wantAudio, this.stream, phrases)));
+          this.target, tier.voice, tier.audio, this.stream,
+          tier.phrases, tier.manual)));
       });
       ws.on("error", (err) => {
         if (!settled) { settled = true; reject(err); }
@@ -117,7 +156,7 @@ class DirectSession {
       ws.on("close", () => {
         this.ready = false;
         if (!settled) { settled = true;
-          handshakeDone ? resolve() : reject(new Error("ws closed"));
+          handshakeDone ? resolve() : reject("WS_CLOSED");
         }
       });
       ws.on("message", (raw) => {
@@ -128,10 +167,10 @@ class DirectSession {
           return;
         }
         if (!handshakeDone && (t === "error" || ev.code)) {
-          const msg = JSON.stringify(ev).slice(0, 300);
-          if (!settled) { settled = true;
-            reject(phrases && /corpus|phrases/i.test(msg)
-                   ? "RETRY_NO_PHRASES" : new Error(msg));
+          if (!settled) {
+            settled = true;
+            try { ws.close(); } catch {}
+            reject(new Error(errText(ev)));
           }
           return;
         }
@@ -149,8 +188,8 @@ class DirectSession {
       this._ev({ type: "turn_done", speaker: deepFindSpeaker(ev) }); return;
     }
     if (t === "error" || ev.code) {
-      this._ev({ type: "error", code: "upstream",
-                 msg: JSON.stringify(ev).slice(0, 300) }); return;
+      this._ev({ type: "error", code: "upstream", msg: errText(ev) });
+      return;
     }
     if (t.endsWith("audio.delta") && !t.includes("transcript")) {
       const pcm = ev.delta || "";
