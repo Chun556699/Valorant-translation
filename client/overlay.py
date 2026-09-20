@@ -1,8 +1,9 @@
 """悬浮翻译窗：无边框/置顶/半透明，队友与自己语音的原文+译文双语气泡。"""
-from PySide6.QtCore import Qt, Signal, QPoint
+from PySide6.QtCore import Qt, Signal, QPoint, QTimer
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-                               QPushButton, QScrollArea, QFrame)
+                               QPushButton, QScrollArea, QFrame,
+                               QGraphicsOpacityEffect)
 
 _SPEAKER_COLORS = {
     "我": "#7ecfff", "队友": "#ffd479",
@@ -78,6 +79,34 @@ class Overlay(QWidget):
         bl.setSpacing(4)
         self.status_lbl = QLabel("初始化…")
         self.status_lbl.setStyleSheet("color:#9fd0ff; font-size:11px;")
+
+        # 活动指示灯：mic=按住说话中(红) mate=队友语音活动(绿)
+        self.ptt_dot = QLabel("🎙")
+        self.ptt_dot.setStyleSheet("color:#ff5f5f; font-size:13px;")
+        self.ptt_dot.setVisible(False)
+        self._ptt_eff = QGraphicsOpacityEffect(self.ptt_dot)
+        self.ptt_dot.setGraphicsEffect(self._ptt_eff)
+        self._ptt_pulse = QTimer(self)
+        self._ptt_pulse.setInterval(160)
+        self._ptt_pulse.timeout.connect(
+            lambda: self._ptt_eff.setOpacity(
+                1.0 if self._ptt_eff.opacity() < 0.9 else 0.25))
+
+        self.mate_dot = QLabel("●")
+        self.mate_dot.setStyleSheet("color:#6fe06f; font-size:10px;")
+        self.mate_dot.setVisible(False)
+        self._mate_eff = QGraphicsOpacityEffect(self.mate_dot)
+        self.mate_dot.setGraphicsEffect(self._mate_eff)
+        self._mate_fade = QTimer(self)
+        self._mate_fade.setInterval(900)
+        self._mate_fade.setSingleShot(True)
+        self._mate_fade.timeout.connect(self._mate_off)
+        self._mate_pulse = QTimer(self)
+        self._mate_pulse.setInterval(200)
+        self._mate_pulse.timeout.connect(
+            lambda: self._mate_eff.setOpacity(
+                1.0 if self._mate_eff.opacity() < 0.9 else 0.3))
+
         self.mate_btn = QPushButton()
         self.mate_btn.setCheckable(True)
         self.mate_btn.setChecked(bool(cfg["mate_enabled"]))
@@ -101,6 +130,8 @@ class Overlay(QWidget):
                             "padding:2px 8px;font-size:11px;border-radius:3px}"
                             "QPushButton:checked{background:#2266aa;color:#fff}")
         bl.insertWidget(0, self.status_lbl)
+        bl.insertWidget(1, self.ptt_dot)
+        bl.insertWidget(2, self.mate_dot)
         bl.addWidget(self.mate_btn)
         bl.addWidget(self.pin_btn)
         bl.addWidget(close)
@@ -162,6 +193,28 @@ class Overlay(QWidget):
     # ---- 状态栏 ----
     def set_status(self, text: str):
         self.status_lbl.setText(text)
+
+    # ---- 活动指示动画 ----
+    def set_ptt_active(self, on: bool):
+        """按住自翻热键：麦克风图标跳动。"""
+        self.ptt_dot.setVisible(on)
+        if on:
+            self._ptt_eff.setOpacity(1.0)
+            self._ptt_pulse.start()
+        else:
+            self._ptt_pulse.stop()
+
+    def _mate_off(self):
+        self.mate_dot.setVisible(False)
+        self._mate_pulse.stop()
+
+    def mate_tick(self):
+        """队友侧有语音/字幕活动：绿灯短促闪烁，900ms 无活动熄灭。"""
+        self.mate_dot.setVisible(True)
+        self._mate_eff.setOpacity(1.0)
+        if not self._mate_pulse.isActive():
+            self._mate_pulse.start()
+        self._mate_fade.start()   # 重启熄灭倒计时
 
     # ---- 消息 ----
     def add_seg(self, stream: str, raw_speaker: str | None, name: str, ev: dict):

@@ -43,6 +43,10 @@ class Bridge(QObject):
     seg = Signal(str, object, str, dict)     # stream, raw_speaker, name, ev
     status = Signal(str)
     ent = Signal(dict)                        # 权益刷新
+    ptt = Signal(bool)                        # 热键按下/松开（任何状态下都发）
+    level = Signal(str, float)                # "mic"/"mate" RMS 电平
+    mate_tick = Signal()                      # 队友音频活动脉冲
+    stream_state = Signal(str, str)           # stream, state（测试页用）
 
 
 class App:
@@ -70,6 +74,8 @@ class App:
         self.ptt: PTTListener | None = None
         self._state = {"mate": "off", "self": "off"}
         self._direct = self.cfg["mode"] == "direct"
+        self._test_self = False               # 测试页单独拉起自翻通道
+        self._lvl_t = {"mic": 0.0, "mate": 0.0}   # 电平发射节流
 
     # ================= 初始化 =================
     def init(self, app: QApplication) -> bool:
@@ -108,6 +114,12 @@ class App:
         self.bridge.status.connect(self.overlay.set_status)
         self.bridge.status.connect(self.win.home.set_status_text)
         self.bridge.ent.connect(self.win.update_entitlement)
+        self.bridge.ptt.connect(self.overlay.set_ptt_active)
+        self.bridge.ptt.connect(self.win.test_page.set_pressed)
+        self.bridge.level.connect(self.win.test_page.set_level)
+        self.bridge.mate_tick.connect(self.overlay.mate_tick)
+        self.bridge.stream_state.connect(self._sync_test_status)
+        self.win.test_self.connect(self.set_test_self)
         self.overlay.open_settings.connect(self.show_settings)
         self.overlay.open_recharge.connect(
             lambda: (self.win.show(), self.win._goto_purchase("money")))
@@ -181,6 +193,21 @@ class App:
         threading.Thread(target=self._mic_feeder, daemon=True,
                          name="mic-feeder").start()
 
+    @staticmethod
+    def _rms(pcm: bytes) -> float:
+        import numpy as np
+        if not pcm:
+            return 0.0
+        a = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+        return float(np.abs(a).mean()) / 32768.0
+
+    def _emit_level(self, which: str, pcm: bytes):
+        now = time.time()
+        if now - self._lvl_t[which] < 0.08:   # ~12fps
+            return
+        self._lvl_t[which] = now
+        self.bridge.level.emit(which, self._rms(pcm))
+
     def _mate_feeder(self):
         """回环 -> mate 中转（仅 running 时采集发送）。"""
         started = False
@@ -197,6 +224,9 @@ class App:
                     time.sleep(0.3)
                     continue
                 chunk = audio.drain_queue(self.mate_q, timeout=0.5)
+                self._emit_level("mate", chunk)
+                if self._rms(chunk) > 0.02:   # 有声音 → 悬浮窗绿点
+                    self.bridge.mate_tick.emit()
                 if self.mate_rc:
                     self.mate_rc.send_audio(chunk)
             except Exception as e:
@@ -216,7 +246,9 @@ class App:
                 chunk = audio.drain_queue(self.mic_q, timeout=0.5)
             except queue.Empty:
                 continue
-            if self.running and self.ptt_on.is_set() and self.self_rc:
+            self._emit_level("mic", chunk)
+            if (self.running or self._test_self) and self.ptt_on.is_set() \
+                    and self.self_rc:
                 self.self_rc.send_audio(chunk)
 
     # ================= 中转连接 =================
@@ -251,13 +283,24 @@ class App:
 
     def _on_state(self, stream, s):
         self._state[stream] = s
+        self.bridge.stream_state.emit(stream, s)
         self._update_status()
+
+    def _sync_test_status(self, stream, s):
+        if stream != "self":
+            return
+        text = {"ready": "通道就绪，按住热键说话", "connecting": "连接中…",
+                "reconnecting": "断线重连中…", "closed": "通道已关闭",
+                "off": ""}.get(s, s)
+        self.win.test_page.set_status(text)
 
     def _on_relay_event(self, stream, ev: dict):
         t = ev.get("type")
         if t == "seg":
             name = self.namer.name(ev.get("speaker"), stream)
             self.bridge.seg.emit(stream, ev.get("speaker"), name, ev)
+            if stream == "mate":
+                self.bridge.mate_tick.emit()
             self._record_history(stream, name, ev)
             if ev.get("dst_final") and self.cfg["auto_copy"] and ev.get("dst"):
                 QApplication.clipboard().setText(ev["dst"])
@@ -304,7 +347,8 @@ class App:
             if self._mate_on:
                 self.mate_rc.start()
         else:
-            self.self_rc.stop()
+            if not self._test_self:
+                self.self_rc.stop()
             self.mate_rc.stop()
             self.loopback.stop()
         self._update_status()
@@ -326,19 +370,34 @@ class App:
         self.ptt.start()
 
     def _ptt_press(self):
-        if not self.running:
-            return
         self.ptt_on.set()
-        self.bridge.status.emit("🎙 说话中…（松开完成）")
+        self.bridge.ptt.emit(True)   # 任何状态下都给 UI 反馈
+        if not (self.running or self._test_self):
+            self.bridge.status.emit("未开启翻译/测试 — 先点「开始翻译」或测试页")
+            return
+        if self.self_rc and not self.self_rc.ready.is_set():
+            self.bridge.status.emit("自翻通道未就绪，检查 Key/网络")
+            return
+        self.bridge.status.emit("说话中…（松开完成）")
 
     def _ptt_release(self):
         self.ptt_on.clear()
+        self.bridge.ptt.emit(False)
         if self.self_rc:
             # 补 0.8s 静音触发服务端断句，再兜底 commit
             silence = b"\x00" * int(16000 * 2 * 0.8)
             self.self_rc.send_audio(silence)
             self.self_rc.commit()
         self._update_status()
+
+    # ================= 测试页通道 =================
+    def set_test_self(self, on: bool):
+        """测试页拉起/断开自翻通道（不需要「开始翻译」也生效）。"""
+        self._test_self = on
+        if on:
+            self.self_rc.start()
+        elif not self.running:
+            self.self_rc.stop()
 
     # ================= UI =================
     def _push_ent(self):

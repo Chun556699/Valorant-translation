@@ -290,6 +290,99 @@ class SubtitlePage(QWidget):
         self.apply_overlay.emit()
 
 
+# ================= 按键测试页 =================
+class TestPage(QWidget):
+    test_self = Signal(bool)   # 拉起/断开自翻通道
+
+    def __init__(self):
+        super().__init__()
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(18, 14, 18, 14)
+        lay.setSpacing(14)
+
+        card = _card()
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(20, 16, 20, 16)
+        cl.addWidget(QLabel("按键与麦克风测试"))
+
+        # 大号按键指示灯
+        self.lamp = QLabel("按住绑定的热键说话")
+        self.lamp.setAlignment(Qt.AlignCenter)
+        self.lamp.setMinimumHeight(90)
+        self._lamp_off = ("background:#eef0f2;color:#999;border-radius:10px;"
+                          "font-size:16px;font-weight:bold")
+        self._lamp_on = ("background:#e05f5f;color:#fff;border-radius:10px;"
+                         "font-size:18px;font-weight:bold")
+        self.lamp.setStyleSheet(self._lamp_off)
+        cl.addWidget(self.lamp)
+
+        # 电平条
+        for label, attr in (("麦克风", "mic_bar"), ("队友回环", "mate_bar")):
+            row = QHBoxLayout()
+            row.addWidget(QLabel(label))
+            bar = QProgressBar()
+            bar.setRange(0, 100)
+            bar.setTextVisible(False)
+            bar.setFixedHeight(10)
+            bar.setStyleSheet(
+                "QProgressBar{background:#eee;border-radius:5px}"
+                f"QProgressBar::chunk{{background:{ACCENT};border-radius:5px}}")
+            setattr(self, attr, bar)
+            row.addWidget(bar, 1)
+            cl.addLayout(row)
+
+        # 测试开关 + 状态
+        row = QHBoxLayout()
+        self.test_btn = QPushButton("开始测试（拉起自翻通道）")
+        self.test_btn.setCheckable(True)
+        self.test_btn.setStyleSheet(
+            f"QPushButton{{background:{ACCENT};color:#fff;border:0;"
+            "border-radius:5px;padding:8px 14px}"
+            "QPushButton:checked{background:#e0685f}")
+        self.test_btn.toggled.connect(self._toggled)
+        row.addWidget(self.test_btn)
+        self.status_lbl = QLabel("")
+        self.status_lbl.setStyleSheet("color:#888")
+        row.addWidget(self.status_lbl, 1)
+        cl.addLayout(row)
+
+        tip = QLabel("说明：测试模式下按住热键说话，松开后悬浮窗会显示译文；"
+                     "电平条验证采集是否正常（麦克风条应随说话跳动）。"
+                     "热键在「设置」页录入。")
+        tip.setWordWrap(True)
+        tip.setStyleSheet("color:#999;font-size:12px")
+        cl.addWidget(tip)
+        lay.addWidget(card)
+        lay.addStretch(1)
+
+        # 电平衰减定时器：无新数据时缓慢回落
+        self._decay = QTimer(self)
+        self._decay.setInterval(120)
+        self._decay.timeout.connect(self._do_decay)
+        self._decay.start()
+
+    def _toggled(self, on):
+        self.test_btn.setText("停止测试" if on else "开始测试（拉起自翻通道）")
+        self.status_lbl.setText("连接中…" if on else "")
+        self.test_self.emit(on)
+
+    def set_pressed(self, on: bool):
+        self.lamp.setText("说话中…松开完成" if on else "按住绑定的热键说话")
+        self.lamp.setStyleSheet(self._lamp_on if on else self._lamp_off)
+
+    def set_level(self, which: str, v: float):
+        bar = self.mic_bar if which == "mic" else self.mate_bar
+        bar.setValue(min(100, int(v * 400)))   # RMS 放大显示
+
+    def set_status(self, s: str):
+        self.status_lbl.setText(s)
+
+    def _do_decay(self):
+        for bar in (self.mic_bar, self.mate_bar):
+            if bar.value() > 0:
+                bar.setValue(bar.value() - 6)
+
+
 # ================= 翻译记录页 =================
 class HistoryPage(QWidget):
     def __init__(self, history: History):
@@ -612,9 +705,11 @@ class MainWindow(QMainWindow):
     apply_overlay = Signal()
     open_settings = Signal()
     logout = Signal()
+    test_self = Signal(bool)
 
     NAV = [
-        ("翻译", "home"), ("字幕窗口", "subtitle"), ("翻译记录", "history"),
+        ("翻译", "home"), ("字幕窗口", "subtitle"), ("按键测试", "test"),
+        ("翻译记录", "history"),
         ("推广", "ref"), ("购买中心", "buy"), ("设置教程", "tutorial"),
         ("设置", "settings"), ("联系我们", "contact"),
     ]
@@ -688,6 +783,7 @@ class MainWindow(QMainWindow):
         self._page_map = {}
         self.home = HomePage(cfg)
         self.subtitle = SubtitlePage(cfg)
+        self.test_page = TestPage()
         self.history_page = HistoryPage(history)
         self.tutorial = TutorialPage()
         self.contact = ContactPage()
@@ -702,7 +798,8 @@ class MainWindow(QMainWindow):
 
         self._page_map = {
             "home": self.home, "subtitle": self.subtitle,
-            "history": self.history_page, "tutorial": self.tutorial,
+            "test": self.test_page, "history": self.history_page,
+            "tutorial": self.tutorial,
             "settings": self.settings_holder, "contact": self.contact,
         }
         if not self._direct:
@@ -721,6 +818,7 @@ class MainWindow(QMainWindow):
         self.home.goto_purchase.connect(self._goto_purchase)
         self.subtitle.show_overlay.connect(self.show_overlay)
         self.subtitle.apply_overlay.connect(self.apply_overlay)
+        self.test_page.test_self.connect(self.test_self)
         if not self._direct:
             self.buy_page.paid.connect(self._on_paid)
 
