@@ -28,6 +28,9 @@ import valorant_terms
 log = logging.getLogger("relay")
 
 FLUSH_EVERY_SECONDS = 15      # 每累计这么多可计费时长就扣一次点
+MAX_AUDIO_B64_LEN = 350_000   # 单条音频 base64 上限（约 256KB 原始 PCM）
+MAX_AUDIO_RATE = 4.0          # 允许的最大推流倍速（相对实时）
+RATE_WINDOW_SECONDS = 10.0    # 超速判定窗口：持续超过该时长才断开
 
 
 def _deep_find_speaker(obj) -> str | None:
@@ -98,10 +101,10 @@ class RelaySession:
         self.billed_total = 0
         self.sub = db.sub_active(user)
         self.user_id = user["id"]
-        # 权益池快照（每次结算时与库同步）
-        self.trial_seconds = user["trial_seconds"]
-        self.credit_seconds = user["credit_seconds"]
-        self.money_cents = user["money_cents"]
+        # 权益池快照（仅用于下发 usage 展示；扣费/校验一律走库，防同账号多会话双花）
+        self.trial_seconds = float(user["trial_seconds"])
+        self.credit_seconds = float(user["credit_seconds"])
+        self.money_cents = float(user["money_cents"])
         self._money_frac = 0.0         # 余额计费的零碎分累计
 
         # mate 流：用上游 speech_started/stopped 事件计量；self 流按输入量计量
@@ -129,51 +132,71 @@ class RelaySession:
         self.bill_acc += seconds
 
     def _has_entitlement(self) -> bool:
+        """权益校验直接读库（单条 SELECT，便宜），不信快照——快照可能被并发会话消耗。"""
+        user = self.db.user_by_id(self.user_id)
+        if not user:
+            return False
+        self.user = user
+        self.sub = self.db.sub_active(user)
         return (self.sub
-                or (self.trial_seconds > 0 and self.user["trial_expire_at"]
-                    > int(time.time()))
-                or self.credit_seconds > 0
-                or self.money_cents > 0)
+                or self.db.trial_active(user)
+                or user["credit_seconds"] > 0
+                or user["money_cents"] > 0)
 
     def _charge(self, seconds: int) -> str:
-        """按优先级扣费：订阅 > 免费额度 > 时长卡 > 余额。返回使用的池子。"""
+        """按优先级扣费：订阅 > 免费额度 > 时长卡 > 余额。返回使用的池子。
+        扣减走 db.deduct_* 原子操作，实际扣到多少算多少，杜绝并发双花。"""
         if self.sub:
             return "free"
-        s = float(seconds)
+        s = seconds
         used = []
-        if self.trial_seconds > 0:
-            t = min(s, self.trial_seconds)
-            self.trial_seconds -= int(round(t))
-            self.db.add_trial(self.user_id, -int(round(t)))
-            used.append(("trial", t, 0))
-            s -= t
-        if s > 0 and self.credit_seconds > 0:
-            t = min(s, float(self.credit_seconds))
-            self.credit_seconds -= int(round(t))
-            self.db.add_credits(self.user_id, -int(round(t)))
-            used.append(("card", t, 0))
-            s -= t
         if s > 0:
-            # 余额按量：秒 * 单价(分/秒)
+            t = self.db.deduct_trial(self.user_id, s)
+            if t:
+                used.append(("trial", t, 0))
+                s -= t
+        if s > 0:
+            t = self.db.deduct_credits(self.user_id, s)
+            if t:
+                used.append(("card", t, 0))
+                s -= t
+        if s > 0:
+            # 余额按量：秒 * 单价(分/秒)，零碎分累计
             fen_per_sec = config.PRICE_FEN_PER_MINUTE / 60.0
             self._money_frac += s * fen_per_sec
             fen = int(self._money_frac)
             if fen > 0:
-                self._money_frac -= fen
-                if fen <= self.money_cents:
-                    self.money_cents -= fen
-                    self.db.add_money(self.user_id, -fen)
+                got = self.db.deduct_money(self.user_id, fen)
+                self._money_frac -= got
+                if got >= fen:
                     used.append(("money", s, fen))
                     s = 0
                 else:
-                    # 余额不足扣满：扣掉能扣的，剩余算欠费（触发断开）
-                    self.db.add_money(self.user_id, -self.money_cents)
-                    used.append(("money", s, self.money_cents))
-                    self.money_cents = 0
+                    # 余额不足扣满：只记能负担的秒数，剩余算欠费（触发断开）
+                    covered = int(got / fen_per_sec) if fen_per_sec > 0 else 0
+                    used.append(("money", covered, got))
+                    s -= covered
+            else:
+                # 不足 1 分：库里确有余额才记账，否则该秒数无法计费（<2s 零头不记）
+                fresh = self.db.user_by_id(self.user_id)
+                if fresh and fresh["money_cents"] > 0:
+                    used.append(("money", s, 0))
+                s = 0
         for pool, secs, fen in used:
             self.db.log_usage(self.user_id, self.stream, int(round(secs)),
                               pool, fen)
         return "+".join(p for p, _, _ in used) or "none"
+
+    def _refresh_entitlement(self):
+        """结算后从库里刷新快照：usage 下发展示真实剩余值。"""
+        user = self.db.user_by_id(self.user_id)
+        if not user:
+            return
+        self.user = user
+        self.sub = self.db.sub_active(user)
+        self.trial_seconds = float(user["trial_seconds"])
+        self.credit_seconds = float(user["credit_seconds"])
+        self.money_cents = float(user["money_cents"])
 
     async def _flush_usage(self, final=False):
         """把累计时长折算扣费。"""
@@ -189,12 +212,13 @@ class RelaySession:
         self.bill_acc = max(0.0, self.bill_acc - charge)
         self.billed_total += charge
         self._charge(charge)
+        self._refresh_entitlement()
         await self._send({
             "type": "usage",
             "used_seconds": self.billed_total,
-            "credit_seconds": self.credit_seconds,
-            "trial_seconds": self.trial_seconds,
-            "money_cents": self.money_cents,
+            "credit_seconds": int(self.credit_seconds),
+            "trial_seconds": int(self.trial_seconds),
+            "money_cents": int(self.money_cents),
             "sub": self.sub,
         })
         if not self._has_entitlement():
@@ -234,9 +258,9 @@ class RelaySession:
             return
 
         await self._send({"type": "ready", "stream": self.stream,
-                          "credit_seconds": self.credit_seconds,
-                          "trial_seconds": self.trial_seconds,
-                          "money_cents": self.money_cents,
+                          "credit_seconds": int(self.credit_seconds),
+                          "trial_seconds": int(self.trial_seconds),
+                          "money_cents": int(self.money_cents),
                           "sub": self.sub})
         tasks = [asyncio.create_task(t) for t in (
             self._pump_client_to_up(),
@@ -244,9 +268,13 @@ class RelaySession:
             self._meter_loop(),
         )]
         try:
-            await asyncio.gather(*tasks)
-        except Exception as e:
-            log.info("会话结束: %s", e)
+            # 任一任务结束（客户端断开/上游关闭/额度耗尽）即收尾，
+            # 不能 gather 等全部：mock/计量循环靠 _closed 退出，互相等会死锁
+            done, _ = await asyncio.wait(tasks,
+                                         return_when=asyncio.FIRST_COMPLETED)
+            for t in done:
+                if t.exception():
+                    log.info("会话结束: %s", t.exception())
         finally:
             for t in tasks:
                 t.cancel()
@@ -262,17 +290,32 @@ class RelaySession:
                 continue
             t = msg.get("type")
             if t == "audio":
-                pcm = base64.b64decode(msg.get("pcm", ""))
+                b64 = msg.get("pcm", "")
+                if not isinstance(b64, str) or len(b64) > MAX_AUDIO_B64_LEN:
+                    await self._err("audio_too_large", "音频帧过大")
+                    break
+                try:
+                    pcm = base64.b64decode(b64, validate=True)
+                except Exception:
+                    continue   # 非法 base64 直接丢弃
+                now = time.monotonic()
                 if self._first_audio_at is None:
-                    self._first_audio_at = time.monotonic()
+                    self._first_audio_at = now
                 secs = len(pcm) / 2 / 16000
                 self._appended_seconds += secs
+                # 防刷流：累计音频时长超出 MAX_AUDIO_RATE 倍实时的部分即"透支"，
+                # 透支超过 RATE_WINDOW_SECONDS 秒则断开（只增不减，防间歇性刷流绕过）
+                over = self._appended_seconds - MAX_AUDIO_RATE * (
+                    now - self._first_audio_at)
+                if over > RATE_WINDOW_SECONDS:
+                    await self._err("audio_rate_abuse", "音频推流超速")
+                    break
                 if self.stream == "self" or not self._saw_speech_event:
                     # self 流按住才发 = 发多少计多少；mate 流未收到 speech 事件时退化
                     self._acc(secs)
                 await self._up_send({
                     "type": "input_audio_buffer.append",
-                    "audio": msg["pcm"],
+                    "audio": b64,
                 })
             elif t == "commit":
                 await self._up_send({"type": "input_audio_buffer.commit"})
@@ -381,6 +424,13 @@ class RelaySession:
             await asyncio.sleep(3)
             if self.bill_acc >= FLUSH_EVERY_SECONDS:
                 await self._flush_usage()
+            else:
+                # 无结算时也刷新权益：订阅中途过期/余额被扣光可在一个周期内生效
+                self._refresh_entitlement()
+                if not self._has_entitlement():
+                    await self._err("insufficient_balance", "额度已用完，请充值")
+                    await self.close()
+                    break
 
     # ---------- Mock 上游：无 DashScope Key 时端到端调试用 ----------
     async def _mock_upstream_loop(self):

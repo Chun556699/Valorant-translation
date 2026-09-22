@@ -9,10 +9,10 @@ def _env(name: str, default: str = "") -> str:
 
 # ---- DashScope / Qwen LiveTranslate ----
 DASHSCOPE_API_KEY = _env("DASHSCOPE_API_KEY")
-# 默认走业务空间专属域名；通用端点 wss://dashscope.aliyuncs.com/api-ws/v1/realtime
+# 通用端点；业务空间专属域名可通过环境变量覆盖
 DASHSCOPE_WS_URL = _env(
     "DASHSCOPE_WS_URL",
-    "wss://llm-5gwthr14damb7ihz.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime"
+    "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
 )
 TRANSLATE_MODEL = _env("TRANSLATE_MODEL", "qwen3.8-livetranslate-flash-realtime")
 # 可选：JSON 字符串，合并进 session.update 的 session 字段，用于不打码调参
@@ -34,11 +34,16 @@ DB_PATH = _env("DB_PATH", os.path.join(os.path.dirname(__file__), "billing.db"))
 ADMIN_TOKEN = _env("ADMIN_TOKEN")    # 管理接口令牌，发卡/测试用
 # MOCK_UPSTREAM=1 时不连 DashScope，用假数据回显，便于无 Key 调试客户端
 MOCK_UPSTREAM = _env("MOCK_UPSTREAM", "0") == "1"
+# TRUST_PROXY=1 时限流按 X-Forwarded-For 首跳识别客户端（仅部署在 Nginx/CF 后开启，
+# 且需同时以 uvicorn --proxy-headers 启动，否则客户端可伪造该头绕过限流）
+TRUST_PROXY = _env("TRUST_PROXY", "0") == "1"
 
 # ---- 权益与定价 ----
 # 新用户免费额度（秒 + 有效期天数，0 关闭试用）
 TRIAL_SECONDS = int(_env("TRIAL_SECONDS", "300"))
 TRIAL_DAYS = int(_env("TRIAL_DAYS", "7"))
+# 同一 IP 每 24h 最多新建游客账号数（防刷免费额度；轮换已有游客不占额度）
+GUEST_GRANTS_PER_IP_PER_DAY = int(_env("GUEST_GRANTS_PER_IP_PER_DAY", "10"))
 # 余额按量计费单价：分/分钟（瓦语通模式：余额按翻译实际时长扣钱）
 PRICE_FEN_PER_MINUTE = int(_env("PRICE_FEN_PER_MINUTE", "30"))
 # 推广返利：被邀请人实付金额的百分比返到邀请人余额（分）
