@@ -1,7 +1,6 @@
-# Python
+# Python（server）
 __pycache__/
 *.py[cod]
-*.egg-info/
 .venv/
 venv/
 
