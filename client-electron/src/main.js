@@ -27,6 +27,27 @@ function writeCfg(patch) {
   return cur;
 }
 
+/* renderer 可写的配置键白名单（仅设置页字段，其余一律忽略） */
+const CFG_SETTABLE = new Set([
+  'ui_lang', 'mode', 'dash_key', 'dash_ws_url', 'dash_model', 'server_url',
+  'token', 'username', 'hotkey', 'target_mate', 'target_self',
+  'mate_enabled', 'running', 'voice', 'play_audio',
+  'auto_copy', 'mate_filter', 'overlay_opacity', 'click_through',
+  'max_bubbles', 'mic_device', 'loopback_device', 'output_device',
+  'overlay_src_color', 'overlay_dst_color',
+]);
+/* session:start 只允许 renderer 传这些非敏感覆盖项，其余一律读磁盘配置 */
+const SESSION_OPTS = new Set([
+  'mode', 'target_mate', 'target_self', 'voice', 'play_audio',
+  'mate_enabled', 'server_url',
+]);
+function maskCfg(c) {
+  /* 下发给 renderer 的配置：抹掉密钥，只留"是否已保存"标记 */
+  const masked = { ...c, dash_key: '' };
+  masked.has_dash_key = !!(c.dash_key && String(c.dash_key).trim());
+  return masked;
+}
+
 /* ---------- 悬浮窗 ---------- */
 function createOverlay() {
   overlayWin = new BrowserWindow({
@@ -43,13 +64,19 @@ function createOverlay() {
   overlayWin.setAlwaysOnTop(true, 'screen-saver');
   overlayWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   overlayWin.loadFile(path.join(__dirname, 'renderer', 'overlay.html'));
-  // 无边框置顶可能被抢，周期复位
-  setInterval(() => {
+  if (overlayTopTimer) clearInterval(overlayTopTimer);
+  overlayTopTimer = setInterval(() => {
     if (overlayWin && !overlayWin.isDestroyed())
       overlayWin.setAlwaysOnTop(true, 'screen-saver');
   }, 1500);
-  overlayWin.on('closed', () => { overlayWin = null; });
+  overlayWin.on('closed', () => {
+    overlayWin = null;
+    if (overlayTopTimer) { clearInterval(overlayTopTimer); overlayTopTimer = null; }
+  });
 }
+
+/* 无边框置顶可能被抢，周期复位（随窗口销毁清理） */
+let overlayTopTimer = null;
 
 /* ---------- 主窗 ---------- */
 function createMain() {
@@ -127,6 +154,12 @@ function startHook() {
     const mod = require('uiohook-napi');
     uIOhook = mod.uIOhook; UiohookKey = mod.UiohookKey;
     let hkBadWarned = false;
+    let pttPressed = false;   // 边沿检测：按住自动重复 keydown 只发一次 true
+    const ptt = (on) => {
+      if (on === pttPressed) return;
+      pttPressed = on;
+      send('ptt', on);
+    };
     const keyOf = () => {
       const hk = normalizeHotkey(readCfg().hotkey);
       if (!hk && !hkBadWarned) {
@@ -138,33 +171,35 @@ function startHook() {
 
     uIOhook.on('keydown', (e) => {
       if (recordingHotkey) {
-        recordingHotkey = false;
-        send('hotkey-captured', { device: 'keyboard', key: String(e.keycode) });
+        if (UiohookKey && e.keycode === UiohookKey.Escape) {
+          cancelHotkeyRecord();   // Esc 取消录入
+          return;
+        }
+        finishHotkeyRecord({ device: 'keyboard', key: String(e.keycode) });
         return;
       }
       const hk = keyOf();
       if (hk.device === 'keyboard' && String(e.keycode) === hk.key)
-        send('ptt', true);
+        ptt(true);
     });
     uIOhook.on('keyup', (e) => {
       const hk = keyOf();
       if (hk.device === 'keyboard' && String(e.keycode) === hk.key)
-        send('ptt', false);
+        ptt(false);
     });
     uIOhook.on('mousedown', (e) => {
       if (recordingHotkey) {
-        recordingHotkey = false;
-        send('hotkey-captured', { device: 'mouse', key: String(e.button) });
+        finishHotkeyRecord({ device: 'mouse', key: String(e.button) });
         return;
       }
       const hk = keyOf();
       if (hk.device === 'mouse' && String(e.button) === hk.key)
-        send('ptt', true);
+        ptt(true);
     });
     uIOhook.on('mouseup', (e) => {
       const hk = keyOf();
       if (hk.device === 'mouse' && String(e.button) === hk.key)
-        send('ptt', false);
+        ptt(false);
     });
     uIOhook.start();
     console.log('uiohook started');
@@ -183,8 +218,17 @@ function sendOverlay(ch, ...args) {
 }
 
 /* ---------- IPC ---------- */
-ipcMain.handle('cfg:get', () => readCfg());
-ipcMain.handle('cfg:set', (_e, patch) => writeCfg(patch));
+ipcMain.handle('cfg:get', () => maskCfg(readCfg()));
+ipcMain.handle('cfg:set', (_e, patch) => {
+  /* 白名单过滤；dash_key 传空串表示"不改动已保存的 Key" */
+  const clean = {};
+  for (const k of Object.keys(patch || {})) {
+    if (!CFG_SETTABLE.has(k)) continue;
+    if (k === 'dash_key' && !String(patch[k] || '').trim()) continue;
+    clean[k] = patch[k];
+  }
+  return maskCfg(writeCfg(clean));
+});
 ipcMain.on('win:min', () => mainWin && mainWin.minimize());
 ipcMain.on('win:close', () => mainWin && mainWin.hide());   // 关到托盘
 ipcMain.on('win:max', () => {
@@ -198,7 +242,23 @@ ipcMain.on('overlay:show', (_e, show) => {
 ipcMain.on('overlay:through', (_e, on) => {
   if (overlayWin) overlayWin.setIgnoreMouseEvents(on, { forward: true });
 });
-ipcMain.on('hotkey:record', () => { recordingHotkey = true; });
+/* 热键录入：Esc 取消 / 10s 超时自动取消，避免卡死导致 PTT 失效 */
+let hkRecordTimer = null;
+function finishHotkeyRecord(spec) {
+  recordingHotkey = false;
+  if (hkRecordTimer) { clearTimeout(hkRecordTimer); hkRecordTimer = null; }
+  send('hotkey-captured', spec);
+}
+function cancelHotkeyRecord() {
+  recordingHotkey = false;
+  if (hkRecordTimer) { clearTimeout(hkRecordTimer); hkRecordTimer = null; }
+  send('hotkey-captured', null);   // null = 取消，renderer 恢复原标签
+}
+ipcMain.on('hotkey:record', () => {
+  recordingHotkey = true;
+  if (hkRecordTimer) clearTimeout(hkRecordTimer);
+  hkRecordTimer = setTimeout(cancelHotkeyRecord, 10000);
+});
 // renderer -> overlay 转发；overlay -> 主窗 反向控制
 ipcMain.on('ov', (_e, ch, payload) => sendOverlay(ch, payload));
 ipcMain.on('ovctl', (_e, action) => send('ovctl', action));
@@ -209,7 +269,14 @@ const { DirectSession, RelaySession } = require('./rt');
 const { termsForTarget } = require('./terms');
 const sessions = { mate: null, self: null };
 
-ipcMain.on('session:start', (_e, { stream, cfg }) => {
+ipcMain.on('session:start', (_e, payload) => {
+  /* 密钥/端点只信磁盘配置；renderer 只能覆盖白名单内的非敏感项 */
+  const { stream } = payload || {};
+  if (stream !== 'mate' && stream !== 'self') return;
+  const opts = (payload && payload.opts) || {};
+  const cfg = readCfg();
+  for (const k of Object.keys(opts))
+    if (SESSION_OPTS.has(k)) cfg[k] = opts[k];
   try {
     if (sessions[stream]) sessions[stream].stop();
     const emit = (ch, payload) => send(ch, payload);
@@ -217,8 +284,15 @@ ipcMain.on('session:start', (_e, { stream, cfg }) => {
     const phrases = cfg.mode === 'direct'
       ? termsForTarget(stream === 'mate' ? cfg.target_mate : cfg.target_self)
       : null;
-    sessions[stream] = new S(cfg, stream, phrases, emit);
-    sessions[stream].start();
+    const s = new S(cfg, stream, phrases, emit);
+    sessions[stream] = s;
+    // 事件代际校验：旧会话（被 stop 后仍可能在退避/连接中）的事件一律丢弃，
+    // 防止快速重开时新旧会话事件串扰
+    const origEmit = s.emit;
+    s.emit = (ch, payload) => {
+      if (sessions[stream] === s) origEmit(ch, payload);
+    };
+    s.start();
   } catch (e) {
     send('rt-ev', { stream, ev: { type: 'error', code: 'start',
                                   msg: String(e.message || e) } });
@@ -237,18 +311,34 @@ ipcMain.on('session:clear', (_e, stream) => {
   const s = sessions[stream]; if (s) s.clear();
 });
 
-// 连通性测试：真实握手验 Key/模型/端点
-ipcMain.handle('session:test', async (_e, cfg) => {
+// 连通性测试：真实握手验 Key/模型/端点。
+// URL/模型一律用磁盘配置；仅允许 renderer 传入待测的新 dash_key（未保存的输入）。
+ipcMain.handle('session:test', async (_e, opts) => {
   const WebSocket = require('ws');
+  const stored = readCfg();
+  const key = (opts && String(opts.dash_key || '').trim()) || stored.dash_key;
   return new Promise((res) => {
     const t0 = Date.now();
+    let settled = false, timer = null;
+    let ws = null;
+    // 前置校验：缺 Key/端点时给出可操作的错误，而不是去连一个坏 URL
+    if (!key)
+      return res({ ok: false, msg: '未配置 API Key（设置页填写 DashScope Key）', ms: 0 });
+    if (!stored.dash_ws_url || !/^wss?:\/\//.test(stored.dash_ws_url))
+      return res({ ok: false, msg: '端点地址无效（应以 wss:// 开头）', ms: 0 });
+    const done = (ok, msg) => {
+      if (settled) return;
+      settled = true;
+      if (timer) { clearTimeout(timer); timer = null; }
+      try { ws && ws.close(); } catch {}
+      res({ ok, msg, ms: Date.now() - t0 });
+    };
     try {
-      const url = `${(cfg.dash_ws_url || '').replace(/\/+$/, '')}?model=${cfg.dash_model}`;
-      const ws = new WebSocket(url, {
-        headers: { Authorization: `Bearer ${cfg.dash_key}` },
+      const url = `${(stored.dash_ws_url || '').replace(/\/+$/, '')}?model=${stored.dash_model}`;
+      ws = new WebSocket(url, {
+        headers: { Authorization: `Bearer ${key}` },
         handshakeTimeout: 12000,
       });
-      const done = (ok, msg) => { try { ws.close(); } catch {} res({ ok, msg, ms: Date.now() - t0 }); };
       ws.on('message', (raw) => {
         let ev; try { ev = JSON.parse(raw.toString()); } catch { return; }
         if (ev.type === 'session.created' || ev.type === 'session.updated')
@@ -260,20 +350,28 @@ ipcMain.handle('session:test', async (_e, cfg) => {
         type: 'session.update', session: { output_modalities: ['text'] } })));
       ws.on('error', (e) => done(false, e.message));
       ws.on('close', (c) => { if (!c) return; done(false, `closed ${c}`); });
-      setTimeout(() => done(false, 'timeout'), 13000);
-    } catch (e) { res({ ok: false, msg: String(e.message || e) }); }
+      timer = setTimeout(() => done(false, 'timeout'), 13000);
+    } catch (e) { done(false, String(e.message || e)); }
   });
 });
 
 app.whenReady().then(() => {
   app.setAppUserModelId('chunfff.VTranslate');
 
-  // 麦克风/系统音频权限：默认全放行（本地自用工具）
-  session.defaultSession.setPermissionRequestHandler((_w, _p, cb) => cb(true));
-  session.defaultSession.setPermissionCheckHandler(() => true);
+  // 权限收紧：仅放行本应用自有窗口的 'media'（麦克风）请求，其余全拒
+  const ownWindow = (wc) =>
+    (mainWin && wc === mainWin.webContents) ||
+    (overlayWin && wc === overlayWin.webContents);
+  session.defaultSession.setPermissionRequestHandler((wc, perm, cb) =>
+    cb(perm === 'media' && ownWindow(wc)));
+  session.defaultSession.setPermissionCheckHandler((wc, perm) =>
+    perm === 'media' && (!wc || ownWindow(wc)));
 
   // 系统音频回环：getDisplayMedia 的 audio='loopback'（Windows 支持）
+  // 仅本应用 file:// 页面可触发，只给回环音频（视频轨 renderer 拿到即丢弃）
   session.defaultSession.setDisplayMediaRequestHandler((req, cb) => {
+    if (!req.securityOrigin || !req.securityOrigin.startsWith('file://'))
+      return cb({});
     desktopCapturer.getSources({ types: ['screen'] }).then(([src]) => {
       cb({ video: src, audio: 'loopback' });
     }).catch(() => cb({}));

@@ -4,7 +4,8 @@ const $ = (id) => document.getElementById(id);
 const state = {
   running: false, pttOn: false, testSelf: false,
   mateOn: true, chState: { mate: 'off', self: 'off' },
-  speakerMap: {}, nextFriend: 1,
+  // 无原型对象：服务器下发的 speaker id 可能是 "__proto__" 等，防原型污染
+  speakerMap: Object.create(null), nextFriend: 1,
   selfAccum: '', lastDstSelf: '',
 };
 const mic = new Capture();
@@ -134,17 +135,17 @@ function setRunning(on) {
   $('homePill').textContent = cfg().mode === 'direct' ? '直连' : '服务器';
   cfgSet({ running: on });
   if (on) startSessions(); else stopSessions();
-  setStatus(on ? '翻译中' : '就绪');
+  setStatus(on ? tr('翻译中') : tr('就绪'));
   pushTrayState();
 }
 
 async function startSessions() {
-  state.speakerMap = {}; state.nextFriend = 1;
-  api.sessionStart('self', cfg());
-  if (state.mateOn && cfg().mate_enabled) api.sessionStart('mate', cfg());
+  state.speakerMap = Object.create(null); state.nextFriend = 1;
+  api.sessionStart('self');
+  if (state.mateOn && cfg().mate_enabled) api.sessionStart('mate');
   if (cfg().mate_enabled) {
     try { await loopback.startLoopback(); loopback.setFilter(cfg().mate_filter); }
-    catch (e) { setStatus('回环采集失败: ' + e.message); }
+    catch (e) { setStatus(tr('回环采集失败: ') + e.message); }
   }
 }
 function stopSessions() {
@@ -157,7 +158,7 @@ function onRtState({ stream, state: s }) {
   state.chState[stream] = s;
   $('chStatus').textContent = { connecting: '连接中…', ready: '通道就绪 ✓',
     reconnecting: '重连中…', closed: '已关闭', off: '' }[s] || s;
-  if (s === 'ready') setStatus(state.running ? '翻译中' : '就绪');
+  if (s === 'ready') setStatus(state.running ? tr('翻译中') : tr('就绪'));
 }
 function onRtEv({ stream, ev }) {
   if (ev.type === 'error') {
@@ -187,9 +188,14 @@ function handleSeg(stream, ev) {
     if (ev.dst_delta) state.selfAccum += ev.dst_delta;
     else if (ev.dst) state.selfAccum = ev.dst;
     if (ev.dst_final) {
+      // delta 模式下 ev.dst 为空，用累计文本；复制 + 记录历史
       const text = state.selfAccum || ev.dst || '';
-      if (text) { navigator.clipboard.writeText(text); }
+      if (text) {
+        navigator.clipboard.writeText(text);
+        recordHistory(stream, name, { dst_final: true, dst: text });
+      }
       state.selfAccum = '';
+      return;
     }
   } else if (ev.dst_final && cfg().auto_copy) {
     const text = ev.dst || '';
@@ -206,13 +212,13 @@ function onPtt(on) {
     on ? tr('说话中…松开完成') : tr('按住绑定的热键说话');
   api.toOverlay('ptt', on);
   if (on) {
-    if (!state.running && !state.testSelf) { setStatus('未开启翻译'); return; }
-    if (state.chState.self !== 'ready') { setStatus('自翻通道未就绪，检查 Key/网络'); return; }
+    if (!state.running && !state.testSelf) { setStatus(tr('未开启翻译')); return; }
+    if (state.chState.self !== 'ready') { setStatus(tr('自翻通道未就绪，检查 Key/网络')); return; }
     api.sessionClear('self');
     state.selfAccum = '';
   } else {
     api.sessionCommit('self');
-    setStatus(state.running ? '翻译中' : '就绪');
+    setStatus(state.running ? tr('翻译中') : tr('就绪'));
   }
 }
 
@@ -223,10 +229,20 @@ async function startMic() {
     if ((state.running || state.testSelf) && state.pttOn)
       api.sessionAudio('self', b64(pcm));
   };
+  mic.onEnded = () => setStatus(tr('麦克风已断开（设备拔出？），请在设置页重选'));
   try { await mic.startMic(cfg().mic_device || undefined); }
-  catch (e) { setStatus('麦克风失败: ' + e.message); }
+  catch (e) { setStatus(tr('麦克风失败: ') + e.message); }
 }
 loopback.onLevel = (l) => { $('mateBar').style.width = Math.min(100, l * 400) + '%'; };
+loopback.onEnded = () => {
+  setStatus(tr('系统音频回环已断开'));
+  if (state.running) {
+    // 尝试自动恢复一次（例如默认输出设备切换后）
+    loopback.startLoopback()
+      .then(() => { loopback.setFilter(cfg().mate_filter); setStatus(tr('回环已恢复')); })
+      .catch(() => setStatus(tr('回环恢复失败，请停止后重新开始翻译')));
+  }
+};
 loopback.onChunk = (pcm) => {
   if (!state.running || !cfg().mate_enabled) return;
   if (l_level(pcm) > 0.02) api.toOverlay('mate_tick');
@@ -248,7 +264,7 @@ function onOverlayCtl(a) {
     state.mateOn = !state.mateOn;
     cfgSet({ mate_enabled: state.mateOn });
     api.toOverlay('mate-state', state.mateOn);
-    if (state.running) { state.mateOn ? api.sessionStart('mate', cfg()) : api.sessionStop('mate'); }
+    if (state.running) { state.mateOn ? api.sessionStart('mate') : api.sessionStop('mate'); }
   } else if (a === 'pin') {
     cfgSet({ click_through: !cfg().click_through }).then(() => {
       api.overlayThrough(cfg().click_through); pushTrayState();
@@ -290,7 +306,7 @@ function initTest() {
   $('btnTestSelf').onclick = () => {
     state.testSelf = !state.testSelf;
     $('btnTestSelf').textContent = state.testSelf ? tr('停止测试') : tr('开始测试（拉起自翻通道）');
-    if (state.testSelf) api.sessionStart('self', cfg());
+    if (state.testSelf) api.sessionStart('self');
     else api.sessionStop('self');
   };
 }
@@ -308,7 +324,7 @@ function recordHistory(stream, name, ev) {
 function renderHistory() {
   const list = JSON.parse(localStorage.getItem('hist') || '[]');
   $('histList').innerHTML = list.map(h =>
-    `<div><span class="who">[${h.who}]</span> ${escapeHtml(h.dst)}</div>`).join('');
+    `<div><span class="who">[${escapeHtml(h.who)}]</span> ${escapeHtml(h.dst)}</div>`).join('');
 }
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
@@ -336,7 +352,10 @@ function initSettings() {
   const c = cfg();
   $('sUiLang').value = c.ui_lang || 'zh';
   $('sMode').value = c.mode;
-  $('sKey').value = c.dash_key; $('sUrl').value = c.dash_ws_url;
+  // dash_key 不下发：已保存则留空并提示，输入新值才覆盖
+  $('sKey').value = '';
+  $('sKey').placeholder = c.has_dash_key ? tr('已保存（输入新 Key 覆盖）') : 'sk-xxxx';
+  $('sUrl').value = c.dash_ws_url;
   $('sModel').value = c.dash_model; $('sServer').value = c.server_url;
   $('sTargetMate').value = c.target_mate; $('sTargetSelf').value = c.target_self;
   $('sPlayAudio').checked = !!c.play_audio;
@@ -350,8 +369,28 @@ function initSettings() {
 
   $('sMode').onchange = () => { syncModeRows(); applyLiveSettings(); };
   $('btnTestConn').onclick = testConn;
-  $('btnRecKey').onclick = () => { $('hkLabel').textContent = tr('请按下按键或鼠标键…'); api.recordHotkey(); };
+  $('btnRecKey').onclick = () => { $('hkLabel').textContent = tr('请按下按键或鼠标键…(Esc 取消)'); api.recordHotkey(); };
   $('btnBeep').onclick = () => player.beep(cfg().output_device || undefined);
+
+  // —— 服务器账号：登录 / 注册 / 游客 / 清除 ——
+  $('btnLogin').onclick = () => authFetch('/api/auth/login', {
+    username: $('sUser').value.trim(), password: $('sPass').value });
+  $('btnRegister').onclick = () => authFetch('/api/auth/register', {
+    username: $('sUser').value.trim(), password: $('sPass').value });
+  $('btnGuest').onclick = () => {
+    // 设备号：首次生成并持久化，游客模式据此复用同一账号
+    let did = localStorage.getItem('vt_device');
+    if (!did) { did = crypto.randomUUID(); localStorage.setItem('vt_device', did); }
+    authFetch('/api/auth/guest', { device_id: did }, tr('游客'));
+  };
+  $('btnLogout').onclick = async () => {
+    await cfgSet({ token: '', username: '' });
+    $('acctStatus').textContent = tr('未登录');
+    $('acctStatus').style.color = '#7a8494';
+    syncModeRows();
+  };
+  if (cfg().token && cfg().username)
+    $('acctStatus').textContent = tr('已登录：') + cfg().username;
 
   // 全部控件 → 即时保存
   const map = {
@@ -363,7 +402,10 @@ function initSettings() {
   for (const [id, key] of Object.entries(map)) {
     $(id).onchange = async () => {
       const v = $(id).type === 'number' ? +$(id).value : $(id).value;
+      // dash_key 留空 = 不改动已保存的 Key（主进程也会忽略空值）
+      if (key === 'dash_key' && !String(v).trim()) { applyLiveSettings(key); return; }
       await cfgSet({ [key]: v }); applyLiveSettings(key);
+      if (key === 'dash_key') { $(id).value = ''; $(id).placeholder = tr('已保存（输入新 Key 覆盖）'); }
     };
   }
   for (const [id, key] of Object.entries({
@@ -380,10 +422,67 @@ function initSettings() {
   };
 }
 
+/* —— 服务器账号认证（登录/注册/游客共用） —— */
+async function authFetch(path, body, label) {
+  const st = $('acctStatus');
+  const base = $('sServer').value.trim().replace(/\/+$/, '');
+  if (!/^https?:\/\//.test(base)) {
+    st.textContent = tr('服务器地址须以 http(s):// 开头');
+    st.style.color = '#ff4655';
+    return;
+  }
+  st.textContent = '…'; st.style.color = '#7a8494';
+  try {
+    const r = await fetch(base + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.code === 1) {
+      await cfgSet({ token: d.token || '', username: d.username || '' });
+      st.textContent = renderAcct(d, label);
+      st.style.color = '#2fae66';
+      syncModeRows();
+      restartSessionsIfRunning();
+    } else {
+      st.textContent = d.msg || ('HTTP ' + r.status);
+      st.style.color = '#ff4655';
+    }
+  } catch (e) {
+    st.textContent = '✗ ' + (e.message || e);
+    st.style.color = '#ff4655';
+  }
+}
+
+/* 登录响应 -> 账号信息一行：用户名 · 余额 · 时长卡 · 订阅（· 试用） */
+function renderAcct(d, label) {
+  const parts = [label || d.username];
+  if (d.money_yuan !== undefined && d.money_yuan !== null)
+    parts.push(`${tr('余额')} ¥${d.money_yuan}`);
+  if (d.credit_minutes !== undefined && d.credit_minutes !== null)
+    parts.push(`${tr('时长卡')} ${d.credit_minutes}min`);
+  if (d.sub_active)
+    parts.push(`${tr('订阅')} →${String(d.sub_expire || d.sub_end || '').slice(5, 10)}`);
+  else
+    parts.push(`${tr('订阅')} ${tr('无')}`);
+  if (d.trial_active && d.trial_minutes)
+    parts.push(`${tr('试用')} ${d.trial_minutes}min`);
+  return parts.join(' · ');
+}
+
+/* 服务器模式下登录成功后原地重开会话，使新 token 生效（同 applyLiveSettings） */
+function restartSessionsIfRunning() {
+  if (cfg().mode !== 'server' || !(state.running || state.testSelf)) return;
+  api.sessionStop('mate'); api.sessionStop('self');
+  api.sessionStart('self');
+  if (state.running && state.mateOn) api.sessionStart('mate');
+}
+
 let _relaySnap = null;
 function relaySnap() {
   const c = cfg();
-  return JSON.stringify([c.mode, c.dash_key, c.dash_ws_url, c.dash_model,
+  return JSON.stringify([c.mode, c.has_dash_key, c.dash_ws_url, c.dash_model,
     c.server_url, c.target_mate, c.target_self, c.voice, c.play_audio]);
 }
 async function applyLiveSettings(changedKey) {
@@ -407,13 +506,13 @@ async function applyLiveSettings(changedKey) {
     if (confirm('运行模式切换需重启。\n现在重启？')) api.relaunch();
     return;
   }
-  // 影响会话的配置 → 原地重开
+  // 影响会话的配置 → 原地重开（主进程自行读磁盘配置，不传密钥）
   const snap = relaySnap();
   if (_relaySnap !== null && snap !== _relaySnap && (state.running || state.testSelf)) {
     api.sessionStop('mate'); api.sessionStop('self');
-    api.sessionStart('self', c);
-    if (state.running && state.mateOn) api.sessionStart('mate', c);
-    else if (state.testSelf) api.sessionStart('self', c);
+    api.sessionStart('self');
+    if (state.running && state.mateOn) api.sessionStart('mate');
+    else if (state.testSelf) api.sessionStart('self');
   }
   _relaySnap = snap;
 }
@@ -435,6 +534,7 @@ function syncHkLabel() {
   $('hkLabel').textContent = `${dev} ${kn}`;
 }
 function onHotkeyCaptured(spec) {
+  if (!spec) { syncHkLabel(); return; }   // Esc/超时取消：恢复原标签
   cfgSet({ hotkey: spec }).then(() => { syncHkLabel(); refreshChips(); });
   $('hkLabel').textContent = '✓';
 }
@@ -444,11 +544,8 @@ async function testConn() {
   const t0 = Date.now();
   try {
     if ($('sMode').value === 'direct') {
-      const r = await api.sessionTest({
-        dash_ws_url: $('sUrl').value.trim(),
-        dash_model: $('sModel').value.trim(),
-        dash_key: $('sKey').value.trim(),
-      });
+      // URL/模型用主进程保存的配置；仅把输入框里的新 Key（若有）带去测试
+      const r = await api.sessionTest({ dash_key: $('sKey').value.trim() });
       res.textContent = (r.ok ? `✓ ${tr('连接成功')} ${r.ms}ms` : '✗ ' + r.msg);
       res.style.color = r.ok ? '#2fae66' : '#ff4655';
     } else {
@@ -501,8 +598,9 @@ const TUTORIAL = `═══════ VTranslate 配置说明书 ════�
 Q 没有翻译输出？  A 检查 API Key / 余额；设置页「测试连接」验端点
 Q 游戏内看不到字幕？  A 游戏画面必须设为「无边框窗口」——
   全屏独占盖住所有置顶窗，Windows 限制无解
-Q 进游戏热键失效？  A Valorant 是管理员权限运行，本程序需同级：
-  exe 内置管理员清单，启动时点「是」
+Q 进游戏热键失效？  A Valorant 以管理员权限运行时，普通权限程序的
+  全局热键无法注入。本程序默认不再强制提权（安全考虑），如需游戏内
+  热键请右键 exe「以管理员身份运行」
 Q 会不会封号？  A 不会。本程序只读写音频设备，不接触游戏进程/
   内存/文件/网络数据，与普通录屏软件同级
 

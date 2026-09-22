@@ -4,10 +4,10 @@
  */
 
 class Capture {
-  /* onChunk(pcm16k:ArrayBuffer), onLevel(rms) */
+  /* onChunk(pcm16k:ArrayBuffer), onLevel(rms), onEnded(意外中断时回调) */
   constructor() {
     this.ctx = null; this.node = null; this.stream = null;
-    this.onChunk = null; this.onLevel = null;
+    this.onChunk = null; this.onLevel = null; this.onEnded = null;
     this.running = false;
     this._filterOn = false;
   }
@@ -17,6 +17,12 @@ class Capture {
   }
   async _attach(mediaStream) {
     this.stream = mediaStream;
+    // 设备拔出/轨被系统结束：通知上层，避免"翻译中"假状态
+    mediaStream.getTracks().forEach(t => {
+      t.onended = () => {
+        if (this.running) { this.running = false; this.onEnded && this.onEnded(); }
+      };
+    });
     this.ctx = new AudioContext();
     await this.ctx.audioWorklet.addModule('../worklets/pcm16.js');
     const src = this.ctx.createMediaStreamSource(mediaStream);

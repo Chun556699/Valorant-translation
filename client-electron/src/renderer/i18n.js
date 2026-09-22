@@ -28,7 +28,7 @@ const _MAP = {
   "连通性": "Connectivity", "测试连接": "Test", "测试中…": "Testing…",
   "连接成功": "Connected", "服务器可达": "Server reachable",
   "自翻热键(按住说话)": "PTT key (hold to talk)", "点击录入": "Record",
-  "请按下按键或鼠标键…": "Press a key or mouse button…",
+  "请按下按键或鼠标键…(Esc 取消)": "Press a key or mouse button… (Esc to cancel)",
   "队友语音翻译成": "Teammates →", "我的语音翻译成": "Me →",
   "回环设备": "Loopback", "播报输出设备": "TTS output",
   "默认麦克风": "Default mic", "默认扬声器回环": "Default loopback",
@@ -42,7 +42,7 @@ const _MAP = {
   "界面语言": "UI language", "✓ 改动即时生效": "✓ Instant apply",
   "队友✓": "Mate✓", "队友✗": "Mate✗", "穿透": "Pin",
   "收起为顶栏 / 展开": "Collapse / expand",
-  "就绪": "ready", "翻译中": "live", "清空": "Clear",
+  "就绪": "Ready", "翻译中": "Translating", "清空": "Clear",
   "按键与麦克风测试": "Key & Mic Test",
   "提示：开启穿透后游戏中鼠标点击会直接穿过字幕，可在托盘菜单重新打开设置。":
       "Click-through lets clicks pass the subtitle window.",
@@ -52,6 +52,25 @@ const _MAP = {
   "打开主窗口": "Open", "显示字幕窗": "Show overlay",
   "字幕穿透": "Click-through", "未开启翻译": "Not translating",
   "说话中…（松开完成）": "Speaking…",
+  "已保存（输入新 Key 覆盖）": "Saved (type a new key to overwrite)",
+  // 服务器账号（设置页）
+  "用户名": "Username", "密码": "Password",
+  "账号": "Account", "账号操作": "Account actions",
+  "登录": "Login", "注册": "Register", "游客模式": "Guest mode",
+  "清除账号": "Clear account",
+  "未登录": "Not logged in", "已登录：": "Logged in: ",
+  "游客": "Guest",
+  "时长卡": "Duration card", "订阅": "Subscription",
+  "无": "no", "试用": "Trial",
+  "服务器地址须以 http(s):// 开头": "Server URL must start with http(s)://",
+  // 状态提示
+  "麦克风失败: ": "Mic failed: ",
+  "回环采集失败: ": "Loopback capture failed: ",
+  "系统音频回环已断开": "Loopback disconnected",
+  "回环已恢复": "Loopback restored",
+  "回环恢复失败，请停止后重新开始翻译": "Loopback recovery failed, please stop and restart translation",
+  "自翻通道未就绪，检查 Key/网络": "Self-translate channel not ready, check Key/network",
+  "麦克风已断开（设备拔出？），请在设置页重选": "Mic disconnected (device unplugged?), please reselect in settings",
 };
 
 function setLang(l) { _lang = l || "zh"; }

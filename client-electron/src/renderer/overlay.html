@@ -1,6 +1,9 @@
 <!DOCTYPE html>
 <html>
-<head><meta charset="utf-8"><style>
+<head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss: http: https:; img-src 'self' data:">
+<style>
 * { box-sizing: border-box; margin: 0; padding: 0;
     font-family: "Segoe UI", "Microsoft YaHei", system-ui; }
 html, body { height: 100%; background: transparent; overflow: hidden; }

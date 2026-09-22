@@ -4,8 +4,8 @@
  */
 const WebSocket = require('ws');
 
-const DEFAULT_WS =
-  "wss://llm-5gwthr14damb7ihz.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime";
+/* 通用端点；业务空间专属域名请在设置页自行填写 */
+const DEFAULT_WS = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime";
 const DEFAULT_MODEL = "qwen3.8-livetranslate-flash-realtime";
 
 function deepFindSpeaker(obj) {
@@ -94,15 +94,21 @@ class DirectSession {
         { phrases: null,         voice: "",         audio: false,
           manual: false },   // 兜底：self 流退回自动断句
       ];
-      let ok = false;
+      let ok = false, cleanClose = false;
       for (const t of tiers) {
         try {
-          await this._connectOnce(t);
+          cleanClose = await this._connectOnce(t);
           ok = true;
           break;
         } catch (e) {
           if (e === "WS_CLOSED") break;   // 正常断开
           const msg = String(e && e.message || e);
+          if (e && e.fatal) {
+            // 致命鉴权错误（Key 无效 401/403）：换档重试也没有意义，直接终止
+            this._connErr(msg);
+            this._stop = true;
+            break;
+          }
           if (/corpus|phrases/i.test(msg) && t.phrases) {
             this._ev({ type: "error", code: "fallback",
                       msg: "端点不支持术语热词，已降级" });
@@ -124,7 +130,9 @@ class DirectSession {
       }
       this.ready = false;
       if (this._stop) break;
-      if (!ok) {
+      // 握手成功后的意外断线也按失败处理：先退避再重连，避免重连风暴；
+      // 只有干净结束（session.finished / 主动 stop）才立即重连
+      if (!ok || !cleanClose) {
         this._state("reconnecting");
         await new Promise(r => setTimeout(r, Math.min(backoff, 15) * 1000));
         backoff = Math.min(backoff * 2, 15);
@@ -138,8 +146,11 @@ class DirectSession {
   }
 
   _connectOnce(tier) {
+    /* resolve(true) = 干净结束（session.finished/主动 stop）；
+       resolve(false) = 握手成功但意外断线（调用方按失败退避重连） */
     return new Promise((resolve, reject) => {
       let settled = false, handshakeDone = false;
+      this._cleanFinish = false;
       const ws = new WebSocket(this.url, {
         headers: { Authorization: `Bearer ${this.key}` },
         handshakeTimeout: 15000,
@@ -151,12 +162,19 @@ class DirectSession {
           tier.phrases, tier.manual)));
       });
       ws.on("error", (err) => {
-        if (!settled) { settled = true; reject(err); }
+        if (!settled) {
+          settled = true;
+          // 401/403/Key 无效：握手期鉴权失败属致命错误，标记后外层不再重试
+          if (/401|403|unauthorized|invalid.{0,20}key/i.test(String(err && err.message)))
+            err.fatal = true;
+          reject(err);
+        }
       });
       ws.on("close", () => {
         this.ready = false;
         if (!settled) { settled = true;
-          handshakeDone ? resolve() : reject("WS_CLOSED");
+          handshakeDone ? resolve(this._cleanFinish || this._stop)
+                        : reject("WS_CLOSED");
         }
       });
       ws.on("message", (raw) => {
@@ -170,7 +188,11 @@ class DirectSession {
           if (!settled) {
             settled = true;
             try { ws.close(); } catch {}
-            reject(new Error(errText(ev)));
+            const err = new Error(errText(ev));
+            // 握手期 401/403/Key 无效属致命错误：标记后外层终止，不再重试
+            if (/401|403|unauthorized|invalid.{0,20}key/i.test(String(err.message)))
+              err.fatal = true;
+            reject(err);
           }
           return;
         }
@@ -223,6 +245,7 @@ class DirectSession {
       return;
     }
     if (t === "session.finished") {
+      this._cleanFinish = true;
       this._ev({ type: "closed", reason: "finished" }); return;
     }
     const spk = deepFindSpeaker(ev);
@@ -250,9 +273,11 @@ class RelaySession {
     const base = cfg.server_url
       .replace(/^https?/, m => m === "https" ? "wss" : "ws")
       .replace(/\/+$/, "");
-    this.url = `${base}/ws/translate?token=${cfg.token}&stream=${stream}` +
+    // token 走 Authorization 头，不进 URL（避免进代理/服务器日志）
+    this.url = `${base}/ws/translate?stream=${stream}` +
                `&target=${stream === "mate" ? cfg.target_mate : cfg.target_self}` +
                `&voice=${cfg.voice}&audio=${cfg.play_audio ? 1 : 0}`;
+    this.token = cfg.token || "";
     this.ws = null; this.ready = false; this._stop = false;
   }
   start() { this._stop = false; this._loop(); }
@@ -261,18 +286,30 @@ class RelaySession {
     let backoff = 1;
     while (!this._stop) {
       this.emit("rt-state", { stream: this.stream, state: "connecting" });
+      let gotReady = false, terminal = false;
+      const connectAt = Date.now();
       try {
         await new Promise((res) => {
-          const ws = new WebSocket(this.url, { handshakeTimeout: 15000 });
+          const ws = new WebSocket(this.url, {
+            handshakeTimeout: 15000,
+            headers: { Authorization: `Bearer ${this.token}` },
+          });
           this.ws = ws;
           ws.on("close", res); ws.on("error", res);
           ws.on("message", (raw) => {
             let ev; try { ev = JSON.parse(raw.toString()); } catch { return; }
             if (ev.type === "ready") {
-              this.ready = true;
+              this.ready = true; gotReady = true;
               this.emit("rt-state", { stream: this.stream, state: "ready" });
-            } else if (ev.type === "closed")
+            } else if (ev.type === "closed") {
+              // 服务端主动结束（可能紧跟终态 error）：不再把 closed 当"干净"跳过退避
               this.emit("rt-state", { stream: this.stream, state: "closed" });
+            } else if (ev.type === "error" &&
+                       (ev.code === "unauthorized" || ev.code === "insufficient_balance")) {
+              // 终态错误：照常透传给 UI 显示原因，但连接结束后不再重连
+              terminal = true;
+              this.emit("rt-ev", { stream: this.stream, ev });
+            }
             else if (ev.type === "audio")
               this.emit("tts", { stream: this.stream, pcm: ev.pcm || "" });
             else this.emit("rt-ev", { stream: this.stream, ev });
@@ -283,7 +320,9 @@ class RelaySession {
           { type: "error", code: "conn", msg: String(e.message || e) } });
       }
       this.ready = false;
-      if (this._stop) break;
+      if (this._stop || terminal) break;
+      // 连接曾 ready 且存活 >= 30s 才重置退避；否则一律按失败退避后重连，防重连风暴
+      if (gotReady && Date.now() - connectAt >= 30000) backoff = 1;
       this.emit("rt-state", { stream: this.stream, state: "reconnecting" });
       await new Promise(r => setTimeout(r, Math.min(backoff, 15) * 1000));
       backoff = Math.min(backoff * 2, 15);

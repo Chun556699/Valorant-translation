@@ -137,6 +137,8 @@ select.input { padding: 6px 8px; }
 .frow.chk input { accent-color: var(--accent); width: 15px; height: 15px; }
 .frow.note { color: var(--ok); font-size: 12px; }
 .conn-res { font-size: 12px; color: var(--mut); }
+/* 服务器账号状态行：与表单控件左对齐，长文本可换行 */
+.acct-line { padding-left: 130px; word-break: break-all; }
 input[type=range] { accent-color: var(--accent); flex: 1; max-width: 200px; }
 
 .tutorial { font-family: inherit; white-space: pre-wrap; font-size: 12.5px;

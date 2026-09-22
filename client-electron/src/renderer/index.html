@@ -2,6 +2,8 @@
 <html>
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss: http: https:; img-src 'self' data:">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -24,6 +26,7 @@
       <button class="nav" data-p="test"><span>🎹</span><i data-t="测试">测试</i></button>
       <button class="nav" data-p="history"><span>📜</span><i data-t="记录">记录</i></button>
       <button class="nav" data-p="tutorial"><span>📖</span><i data-t="教程">教程</i></button>
+      <button class="nav" data-p="contact"><span>✉️</span><i data-t="联系">联系</i></button>
       <button class="nav" data-p="settings"><span>⚙</span><i data-t="设置">设置</i></button>
       <div class="side-foot">
         <div class="side-bal" id="sideBal">本地直连</div>
@@ -120,7 +123,20 @@
               <label class="frow"><span data-t="模型地址">模型地址</span><input id="sUrl" class="input"></label>
               <label class="frow"><span data-t="模型名">模型名</span><input id="sModel" class="input"></label>
             </div>
-            <label class="frow srv-only" style="display:none"><span data-t="服务器地址">服务器地址</span><input id="sServer" class="input"></label>
+            <div class="srv-only" style="display:none">
+              <label class="frow"><span data-t="服务器地址">服务器地址</span><input id="sServer" class="input"></label>
+              <div class="frow"><span data-t="账号">账号</span>
+                <input id="sUser" class="input" placeholder="用户名">
+                <input id="sPass" class="input" type="password" placeholder="密码">
+              </div>
+              <div class="frow"><span data-t="账号操作">账号操作</span>
+                <button class="btn" id="btnLogin" data-t="登录">登录</button>
+                <button class="btn" id="btnRegister" data-t="注册">注册</button>
+                <button class="btn" id="btnGuest" data-t="游客模式">游客模式</button>
+                <button class="btn" id="btnLogout" data-t="清除账号">清除账号</button>
+              </div>
+              <div class="conn-res acct-line" id="acctStatus"></div>
+            </div>
             <div class="frow"><span data-t="连通性">连通性</span>
               <button class="btn" id="btnTestConn" data-t="测试连接">测试连接</button>
               <span class="conn-res" id="connRes"></span></div>

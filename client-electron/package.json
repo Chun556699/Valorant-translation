@@ -17,10 +17,10 @@
     "electron-builder": "^26.0.12"
   },
   "build": {
+    "_comment_win": "不内嵌 requireAdministrator：整进程提权有安全风险。Valorant 提权运行时热键可能失效，用户可手动右键以管理员身份运行",
     "appId": "com.chunfff.vtranslate",
     "productName": "VTranslate",
     "win": {
-      "requestedExecutionLevel": "requireAdministrator",
       "target": [
         "portable"
       ]

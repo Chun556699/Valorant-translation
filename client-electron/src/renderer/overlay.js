@@ -39,7 +39,7 @@ function applyStyle() {
 function addSeg(stream, rawSpeaker, name, ev) {
   const key = stream + '|' + (rawSpeaker || name);
   let seg = segs[key];
-  if (ev.turn_done) { if (seg) seg.open = false; return; }
+  if (ev.type === 'turn_done' || ev.turn_done) { if (seg) seg.open = false; return; }
   if (!seg || !seg.open) {
     const el = document.createElement('div');
     el.className = 'bubble';
@@ -56,6 +56,8 @@ function addSeg(stream, rawSpeaker, name, ev) {
     bubbles.push(seg);
     while (bubbles.length > (cfg.max_bubbles || 8)) {
       const old = bubbles.shift(); old.el.remove();
+      // 同步释放 segs 里指向已移除气泡的引用，防内存缓增
+      for (const k in segs) if (segs[k] === old) { delete segs[k]; break; }
     }
   }
   if (ev.src_delta) seg.src += ev.src_delta;
