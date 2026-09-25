@@ -16,7 +16,7 @@
     "electron": "^35.0.0",
     "electron-builder": "^26.0.12"
   },
-  "//build": "不内嵌 requireAdministrator：整进程提权有安全风险。Valorant 提权运行时热键可能失效，用户可手动右键以管理员身份运行",
+  "//build": "requireAdministrator 必需：Valorant 由 Vanguard 以管理员权限拉起，非提权进程在游戏窗口聚焦时收不到全局热键（UIPI 隔离）",
   "build": {
     "appId": "com.chunfff.vtranslate",
     "productName": "VTranslate",
@@ -24,7 +24,8 @@
       "target": [
         "portable"
       ],
-      "icon": "assets/icon.ico"
+      "icon": "assets/icon.ico",
+      "requestedExecutionLevel": "requireAdministrator"
     },
     "portable": {
       "artifactName": "VTranslate.exe"
