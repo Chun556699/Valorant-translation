@@ -12,11 +12,11 @@ html, body { height: 100%; background: transparent; overflow: hidden; }
   background: rgba(10, 14, 20, var(--bgA)); border: 1px solid rgba(255,255,255,calc(var(--bgA) * .12));
   transition: background .2s; }
 #bar { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 6px 0 10px; flex: none;
-  background: rgba(0,0,0,.35); -webkit-app-region: drag; user-select: none;
+  background: rgba(0,0,0,.35); user-select: none; cursor: move;
   opacity: 1; transition: opacity .25s; }
+body.locked #bar { cursor: default; }
 body.through #bar { background: transparent; opacity: .7; }
 body.through .bbtn { display: none; }
-body.locked #bar { -webkit-app-region: no-drag; }
 body.locked #btnLock { color: #ff8090; }
 .logo { width: 14px; height: 14px; background: #ff4655; flex: none;
   clip-path: polygon(0 0, 100% 0, 100% 72%, 72% 100%, 0 100%); }

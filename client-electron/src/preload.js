@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('api', {
   recordHotkey: () => ipcRenderer.send('hotkey:record'),
   toOverlay: (ch, payload) => ipcRenderer.send('ov', ch, payload),
   overlayCtl: (action) => ipcRenderer.send('ovctl', action),
+  ovDrag: (phase) => ipcRenderer.send('ovdrag', phase),
   relaunch: () => ipcRenderer.send('app:relaunch'),
   trayState: (s) => ipcRenderer.send('tray:state', s),
   // opts 仅接受非敏感会话选项（mode/target/voice 等），密钥由主进程读磁盘

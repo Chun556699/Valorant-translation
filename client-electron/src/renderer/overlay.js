@@ -94,5 +94,14 @@ function upsert(m) {
 document.getElementById('btnMate').onclick = () => api.overlayCtl('mate');
 document.getElementById('btnPin').onclick = () => api.overlayCtl('pin');
 document.getElementById('btnLock').onclick = () => api.overlayCtl('lock');
+
+/* 拖拽：顶栏按下 -> 主进程跟随光标移动窗口；松开/失焦结束。
+ * 锁定或穿透（bar 不可交互到不了这）时不触发。 */
+document.getElementById('bar').addEventListener('mousedown', (e) => {
+  if (cfg.overlay_locked || cfg.click_through || e.target.closest('.bbtn')) return;
+  api.ovDrag('start');
+});
+window.addEventListener('mouseup', () => api.ovDrag('end'));
+window.addEventListener('blur', () => api.ovDrag('end'));
 document.getElementById('btnHide').onclick = () => api.overlayCtl('hide');
 document.getElementById('btnFold').onclick = () => document.body.classList.toggle('folded');

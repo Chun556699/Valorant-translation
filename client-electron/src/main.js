@@ -309,6 +309,27 @@ ipcMain.on('overlay:show', (_e, show) => {
 ipcMain.on('overlay:through', (_e, on) => {
   if (overlayWin) overlayWin.setIgnoreMouseEvents(on, { forward: true });
 });
+/* 悬浮窗拖拽：app-region 在透明窗上不可靠，改为主进程跟随光标。
+ * renderer mousedown -> 记录偏移并启动跟随；mouseup/blur -> 停止 */
+let ovDragTimer = null, ovDragOff = null;
+ipcMain.on('ovdrag', (_e, phase) => {
+  if (phase !== 'start') {
+    if (ovDragTimer) { clearInterval(ovDragTimer); ovDragTimer = null; }
+    ovDragOff = null;
+    return;
+  }
+  if (!overlayWin || overlayWin.isDestroyed()) return;
+  const p = screen.getCursorScreenPoint();
+  const [wx, wy] = overlayWin.getPosition();
+  ovDragOff = { x: p.x - wx, y: p.y - wy };
+  if (ovDragTimer) clearInterval(ovDragTimer);
+  ovDragTimer = setInterval(() => {
+    if (!overlayWin || overlayWin.isDestroyed() || !ovDragOff) return;
+    const c = screen.getCursorScreenPoint();
+    overlayWin.setPosition(Math.round(c.x - ovDragOff.x),
+                           Math.round(c.y - ovDragOff.y));
+  }, 16);
+});
 /* 热键录入：Esc 取消 / 10s 超时自动取消，避免卡死导致 PTT 失效 */
 let hkRecordTimer = null;
 function finishHotkeyRecord(spec) {
