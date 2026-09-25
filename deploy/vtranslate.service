@@ -1,0 +1,26 @@
+# 裸机部署（不用 Docker）时的 systemd 单元，由 install.sh 安装到 /etc/systemd/system/
+[Unit]
+Description=VTranslate server (billing + realtime translation relay + admin console)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vtranslate
+Group=vtranslate
+WorkingDirectory=/opt/vtranslate/server
+EnvironmentFile=/opt/vtranslate/server/.env
+Environment=DB_PATH=/var/lib/vtranslate/billing.db
+Environment=TRUST_PROXY=1
+# 单进程运行（SQLite + 进程内状态），切勿加 --workers
+ExecStart=/opt/vtranslate/venv/bin/uvicorn app:app --host 127.0.0.1 --port 8765 --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/vtranslate
+
+[Install]
+WantedBy=multi-user.target

@@ -1,86 +1,93 @@
-/* 悬浮字幕窗：收主窗经主进程转发的 seg/status/ptt/mate_tick 事件 */
-const SPEAKER_COLORS = {
-  "我": "#7ecfff", "队友": "#ffd479",
-  "好友1": "#9dff9d", "好友2": "#ff9dc4", "好友3": "#c9a7ff",
-  "好友4": "#ffb27e", "好友5": "#8ef0e4",
-};
-const colorFor = (n) => SPEAKER_COLORS[n] || "#ffd479";
-
+/* 悬浮字幕窗：收主窗经主进程转发的 seg/seg-done/status/ptt/mate_tick 事件。
+ * 每段语音（按 key = 通道+原文 item_id）一个气泡：译文在上、原文在下，定稿后按设置自动淡出。 */
 const list = document.getElementById('list');
 const statusEl = document.getElementById('status');
 const pttDot = document.getElementById('pttDot');
 const mateDot = document.getElementById('mateDot');
+const root = document.documentElement;
 
-let segs = {};            // key -> {el, src, dst, open}
-let bubbles = [];
-let cfg = { max_bubbles: 8, overlay_src_color: "#bbbbbb",
-            overlay_dst_color: "#ffffff", overlay_opacity: .85 };
+const bubbles = new Map();   // key -> {el, srcEl, dstEl, timer}
+let cfg = { max_bubbles: 6, overlay_src_color: '#b8c2cc', overlay_dst_color: '#ffffff',
+            overlay_opacity: .6, overlay_font_scale: 1, overlay_fade_sec: 20,
+            overlay_show_src: true, click_through: false, ui_lang: 'zh' };
+const EN = { '队友': 'Mate', '穿透': 'Pin', '就绪': 'Ready' };
+const t = (s) => (cfg.ui_lang === 'en' ? EN[s] || s : s);
 
 let mateTimer = null;
 api.on('cfg', (c) => { Object.assign(cfg, c); applyStyle(); });
-api.on('seg', (m) => addSeg(m.stream, m.speaker, m.name, m.ev));
-api.on('status', (s) => statusEl.textContent = s);
+api.on('seg', upsert);
+api.on('seg-done', ({ key }) => {
+  const b = bubbles.get(key);
+  if (b) { b.el.classList.remove('live'); scheduleFade(key, b); }
+});
+api.on('status', (s) => { statusEl.textContent = s; });
 api.on('ptt', (on) => pttDot.classList.toggle('on', on));
 api.on('mate_tick', () => {
   mateDot.classList.add('on');
   clearTimeout(mateTimer);
   mateTimer = setTimeout(() => mateDot.classList.remove('on'), 900);
 });
+api.on('mate-state', (on) => document.getElementById('btnMate').classList.toggle('off', !on));
 
 function applyStyle() {
-  document.getElementById('wrap').style.background =
-    `rgba(20,20,26,${cfg.overlay_opacity * 0.65})`;
-  for (const b of bubbles) {
+  root.style.setProperty('--bgA', String(cfg.overlay_opacity));
+  root.style.setProperty('--fs', String(cfg.overlay_font_scale || 1));
+  document.body.classList.toggle('nosrc', cfg.overlay_show_src === false);
+  document.body.classList.toggle('through', !!cfg.click_through);
+  document.getElementById('btnMate').textContent = t('队友');
+  document.getElementById('btnPin').textContent = t('穿透');
+  for (const b of bubbles.values()) {
     b.srcEl.style.color = cfg.overlay_src_color;
     b.dstEl.style.color = cfg.overlay_dst_color;
   }
+  trim();
 }
 
-function addSeg(stream, rawSpeaker, name, ev) {
-  const key = stream + '|' + (rawSpeaker || name);
-  let seg = segs[key];
-  if (ev.type === 'turn_done' || ev.turn_done) { if (seg) seg.open = false; return; }
-  if (!seg || !seg.open) {
+function scheduleFade(key, b) {
+  clearTimeout(b.timer);
+  const sec = +cfg.overlay_fade_sec || 0;
+  if (!sec) return;
+  b.timer = setTimeout(() => {
+    b.el.classList.add('fade');
+    setTimeout(() => remove(key), 1300);
+  }, sec * 1000);
+}
+function remove(key) {
+  const b = bubbles.get(key);
+  if (!b) return;
+  clearTimeout(b.timer); b.el.remove(); bubbles.delete(key);
+}
+function trim() {
+  const max = cfg.max_bubbles || 6;
+  while (bubbles.size > max) remove(bubbles.keys().next().value);
+}
+
+function upsert(m) {
+  let b = bubbles.get(m.key);
+  if (!b && m.late) return;   // 已淡出的段收到迟到更新：不复活气泡
+  if (!b) {
     const el = document.createElement('div');
-    el.className = 'bubble';
-    const who = document.createElement('div');
-    who.className = 'b-who'; who.textContent = name;
-    who.style.color = colorFor(name);
-    const src = document.createElement('div');
-    src.className = 'b-src'; src.style.color = cfg.overlay_src_color;
-    const dst = document.createElement('div');
-    dst.className = 'b-dst'; dst.style.color = cfg.overlay_dst_color;
-    el.append(who, src, dst);
+    el.className = 'b live';
+    const who = document.createElement('span');
+    who.className = 'who'; who.textContent = m.name; who.style.background = m.color || '#ffd479';
+    const dst = document.createElement('div'); dst.className = 'dst'; dst.style.color = cfg.overlay_dst_color;
+    const src = document.createElement('div'); src.className = 'src'; src.style.color = cfg.overlay_src_color;
+    el.append(who, dst, src);
     list.appendChild(el);
-    seg = segs[key] = { el, srcEl: src, dstEl: dst, src: '', dst: '', open: true };
-    bubbles.push(seg);
-    while (bubbles.length > (cfg.max_bubbles || 8)) {
-      const old = bubbles.shift(); old.el.remove();
-      // 同步释放 segs 里指向已移除气泡的引用，防内存缓增
-      for (const k in segs) if (segs[k] === old) { delete segs[k]; break; }
-    }
+    b = { el, srcEl: src, dstEl: dst, timer: null };
+    bubbles.set(m.key, b);
+    trim();
   }
-  if (ev.src_delta) seg.src += ev.src_delta;
-  else if (ev.src !== undefined && ev.src) seg.src = ev.src;
-  if (ev.dst_delta) seg.dst += ev.dst_delta;
-  else if (ev.dst !== undefined && ev.dst) seg.dst = ev.dst;
-  seg.srcEl.textContent = seg.src;
-  seg.dstEl.textContent = seg.dst;
-  seg.srcEl.style.display = seg.src ? '' : 'none';
-  seg.dstEl.style.display = seg.dst ? '' : 'none';
-  if (ev.src_final && seg.dstDone) seg.open = false;
-  if (ev.src_final) seg.srcDone = true;
-  if (ev.dst_final) { seg.dstDone = true; if (seg.srcDone) seg.open = false; }
+  b.dstEl.textContent = m.dst || '';
+  b.srcEl.textContent = m.src || '';
+  b.dstEl.style.display = m.dst ? '' : 'none';
+  b.srcEl.style.display = m.src ? '' : 'none';
+  if (m.final) { b.el.classList.remove('live'); scheduleFade(m.key, b); }
   list.scrollTop = list.scrollHeight;
 }
 
 /* 顶栏按钮 -> 主窗 */
 document.getElementById('btnMate').onclick = () => api.overlayCtl('mate');
-document.getElementById('btnPin').onclick  = () => api.overlayCtl('pin');
+document.getElementById('btnPin').onclick = () => api.overlayCtl('pin');
 document.getElementById('btnHide').onclick = () => api.overlayCtl('hide');
-document.getElementById('btnFold').onclick = () => {
-  document.body.classList.toggle('folded');
-};
-api.on('mate-state', (on) =>
-  document.getElementById('btnMate').textContent = on ? '队友✓' : '队友✗');
-api.on('status-text', () => {});
+document.getElementById('btnFold').onclick = () => document.body.classList.toggle('folded');

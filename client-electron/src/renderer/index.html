@@ -3,166 +3,227 @@
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss: http: https:; img-src 'self' data:">
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+<svg width="0" height="0" class="defs" aria-hidden="true">
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 18v-6a9 9 0 0118 0v6"/><path d="M21 19a2 2 0 01-2 2h-1v-7h3zM3 19a2 2 0 002 2h1v-7H3z"/></symbol>
+  <symbol id="i-sub" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="M6 12h4M14 12h4M6 16h8M16 16h2"/></symbol>
+  <symbol id="i-test" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0014 0M12 17v4M8 21h8"/></symbol>
+  <symbol id="i-hist" viewBox="0 0 24 24"><path d="M3 12a9 9 0 109-9 9.7 9.7 0 00-6.7 2.8L3 8"/><path d="M3 3v5h5M12 7v5l4 2"/></symbol>
+  <symbol id="i-set" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></symbol>
+  <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 015.8 1c0 2-3 3-3 3M12 17h.01"/></symbol>
+  <symbol id="i-power" viewBox="0 0 24 24"><path d="M18.4 6.6a9 9 0 11-12.8 0M12 2v10"/></symbol>
+  <symbol id="i-min" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></symbol>
+</svg>
+
 <div id="app">
   <!-- 标题栏 -->
-  <div id="titlebar">
+  <header id="titlebar">
     <div class="tb-logo">V</div>
     <div class="tb-title">VTranslate</div>
-    <div class="tb-dot" id="tbDot"></div>
+    <span class="chip" id="tbState"><i class="dot"></i><b data-t="待机">待机</b></span>
+    <span class="chip ghost" id="tbMode">直连</span>
     <div class="tb-spacer"></div>
-    <button class="tb-btn" id="btnMin">—</button>
-    <button class="tb-btn tb-close" id="btnClose">✕</button>
-  </div>
+    <button class="tb-btn" id="btnMin" title="最小化"><svg><use href="#i-min"/></svg></button>
+    <button class="tb-btn tb-close" id="btnClose" title="关闭到托盘"><svg><use href="#i-x"/></svg></button>
+  </header>
+
+  <div id="announce" class="announce hidden"><svg><use href="#i-bell"/></svg><span id="announceText"></span></div>
 
   <div id="body">
-    <!-- 侧栏 -->
     <nav id="side">
-      <button class="nav on" data-p="home"><span>🎧</span><i data-t="翻译">翻译</i></button>
-      <button class="nav" data-p="subtitle"><span>🪟</span><i data-t="字幕">字幕</i></button>
-      <button class="nav" data-p="test"><span>🎹</span><i data-t="测试">测试</i></button>
-      <button class="nav" data-p="history"><span>📜</span><i data-t="记录">记录</i></button>
-      <button class="nav" data-p="tutorial"><span>📖</span><i data-t="教程">教程</i></button>
-      <button class="nav" data-p="contact"><span>✉️</span><i data-t="联系">联系</i></button>
-      <button class="nav" data-p="settings"><span>⚙</span><i data-t="设置">设置</i></button>
-      <div class="side-foot">
-        <div class="side-bal" id="sideBal">本地直连</div>
+      <button class="nav on" data-p="home"><svg><use href="#i-home"/></svg><i data-t="翻译">翻译</i></button>
+      <button class="nav" data-p="subtitle"><svg><use href="#i-sub"/></svg><i data-t="字幕">字幕</i></button>
+      <button class="nav" data-p="test"><svg><use href="#i-test"/></svg><i data-t="测试">测试</i></button>
+      <button class="nav" data-p="history"><svg><use href="#i-hist"/></svg><i data-t="记录">记录</i></button>
+      <button class="nav" data-p="settings"><svg><use href="#i-set"/></svg><i data-t="设置">设置</i></button>
+      <button class="nav" data-p="help"><svg><use href="#i-help"/></svg><i data-t="帮助">帮助</i></button>
+      <div class="side-foot" id="sideAcct" title="">
+        <svg><use href="#i-user"/></svg><span id="sideBal">本地直连</span>
       </div>
     </nav>
 
-    <!-- 页面 -->
     <main id="pages">
-      <!-- 翻译页 -->
+      <!-- ============ 翻译 ============ -->
       <section class="page on" id="pg-home">
-        <div class="card">
-          <div class="card-head"><b data-t="翻译">翻译</b><span class="pill" id="homePill">直连 · 就绪</span></div>
-          <div class="chips" id="homeChips"></div>
-          <div class="home-status" id="homeStatus">准备就绪</div>
-          <button class="btn-primary big" id="btnRun">开始翻译</button>
-          <div class="hint" data-t="队友语音自动翻译；按住热键翻译自己的语音">队友语音自动翻译；按住热键翻译自己的语音</div>
-        </div>
-        <div class="card">
-          <div class="card-head"><b data-t="当前音色">当前音色</b></div>
-          <div class="row">
-            <select id="voiceSel" class="input"><option>Cherry</option></select>
-            <label class="switch"><input type="checkbox" id="playAudio" checked><span class="sl"></span><em data-t="播报译文">播报译文</em></label>
+        <div class="home-grid">
+          <div class="col">
+            <div class="card hero" id="hero">
+              <button class="power" id="btnRun" aria-label="start">
+                <span class="ring"></span><svg><use href="#i-power"/></svg>
+              </button>
+              <div class="hero-text">
+                <div class="hero-status" id="homeStatus" data-t="准备就绪">准备就绪</div>
+                <div class="hero-sub" id="homeChips"></div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="channels">
+                <div class="chan" id="chMate">
+                  <div class="chan-h"><i class="dot"></i><b data-t="队友语音">队友语音</b><span class="chan-st" id="stMate">—</span></div>
+                  <div class="meter"><div class="meter-fill mate" id="mateBar"></div></div>
+                  <label class="switch"><input type="checkbox" id="mateOn" checked><span class="sl"></span><em data-t="自动翻译队友">自动翻译队友</em></label>
+                </div>
+                <div class="chan" id="chSelf">
+                  <div class="chan-h"><i class="dot"></i><b data-t="我的语音">我的语音</b><span class="chan-st" id="stSelf">—</span></div>
+                  <div class="meter"><div class="meter-fill" id="micBar"></div></div>
+                  <div class="ptt-hint" id="pttHint">—</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="quick">
+                <label><span data-t="队友 → ">队友 → </span><select id="qTargetMate" class="input sm lang-sel"></select></label>
+                <label><span data-t="我 → ">我 → </span><select id="qTargetSelf" class="input sm lang-sel"></select></label>
+                <label><span data-t="音色">音色</span><select id="voiceSel" class="input sm voice-sel"></select></label>
+                <label class="switch"><input type="checkbox" id="playAudio"><span class="sl"></span><em data-t="播报译文">播报译文</em></label>
+              </div>
+            </div>
+          </div>
+
+          <div class="col">
+            <div class="card acct srv-only" id="acctCard">
+              <div class="acct-h"><svg><use href="#i-user"/></svg><b id="acctName">未登录</b><span class="grow"></span><button class="btn sm" id="acctGo" data-t="账号设置">账号设置</button></div>
+              <div class="acct-stats" id="acctStats"></div>
+            </div>
+            <div class="card feed-card">
+              <div class="card-head"><b data-t="实时字幕">实时字幕</b><button class="btn sm ghost" id="btnFeedClear" data-t="清屏">清屏</button></div>
+              <div class="feed" id="feed"><div class="empty" id="feedEmpty" data-t="开始翻译后，队友和你的语音译文会实时显示在这里">开始翻译后，队友和你的语音译文会实时显示在这里</div></div>
+            </div>
           </div>
         </div>
       </section>
 
-      <!-- 字幕页 -->
+      <!-- ============ 字幕 ============ -->
       <section class="page" id="pg-subtitle">
-        <div class="card">
-          <div class="card-head"><b data-t="字幕悬浮窗">字幕悬浮窗</b></div>
-          <div class="row">
-            <button class="btn" id="btnOvShow" data-t="显示/隐藏字幕窗">显示/隐藏字幕窗</button>
-            <button class="btn" id="btnThrough">穿透: 关</button>
-            <label class="row-item"><span data-t="不透明度">不透明度</span>
-              <select id="ovOpacity" class="input sm"><option>40%</option><option>55%</option><option>70%</option><option selected>85%</option><option>100%</option></select>
-            </label>
+        <div class="two">
+          <div class="card">
+            <div class="card-head"><b data-t="字幕悬浮窗">字幕悬浮窗</b></div>
+            <div class="form">
+              <div class="frow"><span data-t="悬浮窗">悬浮窗</span>
+                <button class="btn" id="btnOvShow" data-t="显示/隐藏字幕窗">显示/隐藏字幕窗</button></div>
+              <label class="frow"><span data-t="鼠标穿透">鼠标穿透</span>
+                <span class="switch"><input type="checkbox" id="sThrough"><span class="sl"></span><em data-t="游戏中点击直接穿过字幕">游戏中点击直接穿过字幕</em></span></label>
+              <label class="frow"><span data-t="背景不透明度">背景不透明度</span><input type="range" id="sOpacity" min="0" max="100"><em class="val" id="opVal"></em></label>
+              <label class="frow"><span data-t="字号">字号</span><input type="range" id="sFont" min="80" max="180" step="10"><em class="val" id="fontVal"></em></label>
+              <label class="frow"><span data-t="自动淡出">自动淡出</span><input type="range" id="sFade" min="0" max="60" step="5"><em class="val" id="fadeVal"></em></label>
+              <label class="frow"><span data-t="最多保留条数">最多保留条数</span><input type="range" id="sMaxLines" min="1" max="20"><em class="val" id="maxVal"></em></label>
+              <label class="frow"><span data-t="显示原文">显示原文</span>
+                <span class="switch"><input type="checkbox" id="sShowSrc"><span class="sl"></span><em data-t="译文下方显示对方原话">译文下方显示对方原话</em></span></label>
+              <div class="frow"><span data-t="颜色">颜色</span>
+                <label class="row-item"><em data-t="原文">原文</em><input type="color" id="srcColor" class="swatch"></label>
+                <label class="row-item"><em data-t="译文">译文</em><input type="color" id="dstColor" class="swatch"></label></div>
+            </div>
+            <div class="hint" data-t="游戏需设为「无边框窗口」模式，独占全屏会盖住所有悬浮窗。开启穿透后可在托盘菜单关闭。">游戏需设为「无边框窗口」模式，独占全屏会盖住所有悬浮窗。开启穿透后可在托盘菜单关闭。</div>
           </div>
-          <div class="hint" data-t="提示：开启穿透后游戏中鼠标点击会直接穿过字幕，可在托盘菜单重新打开设置。">提示：开启穿透后游戏中鼠标点击会直接穿过字幕，可在托盘菜单重新打开设置。</div>
-        </div>
-        <div class="card">
-          <div class="card-head"><b data-t="预览">预览</b></div>
-          <div class="ov-preview" id="ovPreview">
-            <div class="pv-speaker">好友1</div>
-            <div class="pv-src" id="pvSrc">Cover me, I'm planting the spike</div>
-            <div class="pv-dst" id="pvDst">掩护我，我在下包</div>
-          </div>
-          <div class="row">
-            <label class="row-item"><span data-t="原文颜色">原文颜色</span><input type="color" id="srcColor" value="#bbbbbb" class="swatch"></label>
-            <label class="row-item"><span data-t="译文颜色">译文颜色</span><input type="color" id="dstColor" value="#ffffff" class="swatch"></label>
+          <div class="card">
+            <div class="card-head"><b data-t="预览">预览</b></div>
+            <div class="ov-preview" id="ovPreview">
+              <div class="pv-b"><span class="pv-who c1">队友1</span><div class="pv-dst">掩护我，我在下包</div><div class="pv-src">Cover me, I'm planting the spike</div></div>
+              <div class="pv-b"><span class="pv-who c2">队友2</span><div class="pv-dst">B 大两个人，一个残血</div><div class="pv-src">Two B main, one is lit</div></div>
+              <div class="pv-b"><span class="pv-who me">我</span><div class="pv-dst">Rotate to A, I'll smoke heaven</div><div class="pv-src">转 A，我给高台烟</div></div>
+            </div>
           </div>
         </div>
       </section>
 
-      <!-- 测试页 -->
+      <!-- ============ 测试 ============ -->
       <section class="page" id="pg-test">
         <div class="card">
-          <div class="card-head"><b data-t="按键与麦克风测试">按键与麦克风测试</b></div>
+          <div class="card-head"><b data-t="按键与麦克风测试">按键与麦克风测试</b><span class="ch-status" id="chStatus"></span></div>
           <div class="lamp" id="pttLamp"><span data-t="按住绑定的热键说话">按住绑定的热键说话</span></div>
           <div class="meters">
-            <div class="meter-row"><span data-t="麦克风">麦克风</span><div class="meter"><div class="meter-fill" id="micBar"></div></div></div>
-            <div class="meter-row"><span data-t="队友回环">队友回环</span><div class="meter"><div class="meter-fill mate" id="mateBar"></div></div></div>
+            <div class="meter-row"><span data-t="麦克风">麦克风</span><div class="meter"><div class="meter-fill" id="micBar2"></div></div></div>
+            <div class="meter-row"><span data-t="队友回环">队友回环</span><div class="meter"><div class="meter-fill mate" id="mateBar2"></div></div></div>
           </div>
           <div class="row">
             <button class="btn-primary" id="btnTestSelf" data-t="开始测试（拉起自翻通道）">开始测试（拉起自翻通道）</button>
-            <span class="ch-status" id="chStatus"></span>
+            <button class="btn" id="btnBeep" data-t="试听播报">试听播报</button>
           </div>
           <div class="hint" data-t="说明：测试模式下按住热键说话，松开后悬浮窗会显示译文；电平条验证采集是否正常。热键在「设置」页录入。">说明：测试模式下按住热键说话，松开后悬浮窗会显示译文；电平条验证采集是否正常。热键在「设置」页录入。</div>
         </div>
       </section>
 
-      <!-- 记录页 -->
+      <!-- ============ 记录 ============ -->
       <section class="page" id="pg-history">
         <div class="card grow">
-          <div class="card-head"><b data-t="翻译记录">翻译记录</b><button class="btn sm" id="btnClearHist" data-t="清空">清空</button></div>
+          <div class="card-head"><b data-t="翻译记录">翻译记录</b>
+            <span class="grow"></span>
+            <input id="histQ" class="input sm" data-tp="搜索" placeholder="搜索">
+            <button class="btn sm" id="btnClearHist" data-t="清空">清空</button></div>
           <div class="hist" id="histList"></div>
         </div>
       </section>
 
-      <!-- 教程页 -->
-      <section class="page" id="pg-tutorial">
-        <div class="card grow"><pre class="tutorial" id="tutorialText"></pre></div>
-      </section>
-
-      <!-- 设置页 -->
+      <!-- ============ 设置 ============ -->
       <section class="page" id="pg-settings">
-        <div class="card grow" id="settingsCard">
-          <div class="form" id="settingsForm">
-            <label class="frow"><span data-t="界面语言">界面语言</span>
-              <select id="sUiLang" class="input"><option value="zh">中文</option><option value="en">English</option></select></label>
+        <div class="card">
+          <div class="card-head"><b data-t="连接">连接</b><span class="conn-res" id="connRes"></span></div>
+          <div class="form">
             <label class="frow"><span data-t="运行模式">运行模式</span>
-              <select id="sMode" class="input"><option value="direct">直连 DashScope（个人测试）</option><option value="server">计费服务器（发行版）</option></select></label>
+              <select id="sMode" class="input"><option value="server" data-t="计费服务器（推荐）">计费服务器（推荐）</option><option value="direct" data-t="直连 DashScope（自带 Key）">直连 DashScope（自带 Key）</option></select>
+              <button class="btn" id="btnTestConn" data-t="测试连接">测试连接</button></label>
             <div class="direct-only">
               <label class="frow"><span>API Key</span><input id="sKey" class="input" type="password" placeholder="sk-xxxx"></label>
               <label class="frow"><span data-t="模型地址">模型地址</span><input id="sUrl" class="input"></label>
               <label class="frow"><span data-t="模型名">模型名</span><input id="sModel" class="input"></label>
             </div>
-            <div class="srv-only" style="display:none">
-              <label class="frow"><span data-t="服务器地址">服务器地址</span><input id="sServer" class="input"></label>
+            <div class="srv-only">
+              <label class="frow"><span data-t="服务器地址">服务器地址</span><input id="sServer" class="input" placeholder="https://api.example.com"></label>
               <div class="frow"><span data-t="账号">账号</span>
-                <input id="sUser" class="input" placeholder="用户名">
-                <input id="sPass" class="input" type="password" placeholder="密码">
-              </div>
-              <div class="frow"><span data-t="账号操作">账号操作</span>
-                <button class="btn" id="btnLogin" data-t="登录">登录</button>
+                <input id="sUser" class="input half" data-tp="用户名" placeholder="用户名">
+                <input id="sPass" class="input half" type="password" data-tp="密码" placeholder="密码"></div>
+              <div class="frow"><span></span>
+                <button class="btn-primary" id="btnLogin" data-t="登录">登录</button>
                 <button class="btn" id="btnRegister" data-t="注册">注册</button>
                 <button class="btn" id="btnGuest" data-t="游客模式">游客模式</button>
-                <button class="btn" id="btnLogout" data-t="清除账号">清除账号</button>
-              </div>
-              <div class="conn-res acct-line" id="acctStatus"></div>
+                <button class="btn ghost" id="btnLogout" data-t="退出登录">退出登录</button></div>
+              <div class="frow"><span></span><span class="conn-res" id="acctStatus"></span></div>
             </div>
-            <div class="frow"><span data-t="连通性">连通性</span>
-              <button class="btn" id="btnTestConn" data-t="测试连接">测试连接</button>
-              <span class="conn-res" id="connRes"></span></div>
-            <label class="frow"><span data-t="自翻热键(按住说话)">自翻热键(按住说话)</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><b data-t="语言与热键">语言与热键</b></div>
+          <div class="form">
+            <label class="frow"><span data-t="界面语言">界面语言</span>
+              <select id="sUiLang" class="input"><option value="zh">中文</option><option value="en">English</option></select></label>
+            <label class="frow"><span data-t="队友语音翻译成">队友语音翻译成</span><select id="sTargetMate" class="input lang-sel"></select></label>
+            <label class="frow"><span data-t="我的语音翻译成">我的语音翻译成</span><select id="sTargetSelf" class="input lang-sel"></select></label>
+            <div class="frow"><span data-t="自翻热键(按住说话)">自翻热键(按住说话)</span>
               <button class="btn" id="btnRecKey" data-t="点击录入">点击录入</button>
-              <span class="conn-res" id="hkLabel"></span></label>
-            <label class="frow"><span data-t="队友语音翻译成">队友语音翻译成</span>
-              <select id="sTargetMate" class="input"><option value="zh">中文</option><option value="en">English</option><option value="ja">日本語</option></select></label>
-            <label class="frow"><span data-t="我的语音翻译成">我的语音翻译成</span>
-              <select id="sTargetSelf" class="input"><option value="zh">中文</option><option value="en">English</option><option value="ja">日本語</option></select></label>
+              <span class="kbd" id="hkLabel"></span></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><b data-t="音频">音频</b></div>
+          <div class="form">
             <label class="frow"><span data-t="麦克风">麦克风</span><select id="sMic" class="input"></select></label>
             <label class="frow"><span data-t="播报输出设备">播报输出设备</span><select id="sOut" class="input"></select></label>
-            <label class="frow chk"><input type="checkbox" id="sPlayAudio" checked><span data-t="播放译文声音（TTS 播报）">播放译文声音（TTS 播报）</span>
-              <button class="btn sm" id="btnBeep" data-t="试听播报">试听播报</button></label>
-            <label class="frow chk"><input type="checkbox" id="sAutoCopy"><span data-t="译文定稿后自动复制到剪贴板">译文定稿后自动复制到剪贴板</span></label>
-            <label class="frow chk"><input type="checkbox" id="sMateFilter" checked><span data-t="队友流语音频段过滤（抑制枪声/脚步声噪声）">队友流语音频段过滤（抑制枪声/脚步声噪声）</span></label>
-            <label class="frow"><span data-t="悬浮窗不透明度">悬浮窗不透明度</span><input type="range" id="sOpacity" min="30" max="100" value="85"><span class="conn-res" id="opVal">85%</span></label>
-            <label class="frow"><span data-t="最多保留条数">最多保留条数</span><input type="number" id="sMaxLines" class="input sm" min="1" max="30" value="8"></label>
-            <label class="frow chk"><input type="checkbox" id="sThrough"><span data-t="鼠标穿透悬浮窗（游戏中点不到字幕）">鼠标穿透悬浮窗（游戏中点不到字幕）</span></label>
-            <div class="frow note" data-t="✓ 改动即时生效">✓ 改动即时生效</div>
+            <label class="frow"><span data-t="播报">播报</span>
+              <span class="switch"><input type="checkbox" id="sPlayAudio"><span class="sl"></span><em data-t="播放译文声音（TTS 播报）">播放译文声音（TTS 播报）</em></span></label>
+            <label class="frow"><span data-t="降噪">降噪</span>
+              <span class="switch"><input type="checkbox" id="sMateFilter"><span class="sl"></span><em data-t="队友流语音频段过滤（抑制枪声/脚步声噪声）">队友流语音频段过滤（抑制枪声/脚步声噪声）</em></span></label>
+            <label class="frow"><span data-t="剪贴板">剪贴板</span>
+              <span class="switch"><input type="checkbox" id="sAutoCopy"><span class="sl"></span><em data-t="队友译文定稿后也自动复制（我的译文总会复制）">队友译文定稿后也自动复制（我的译文总会复制）</em></span></label>
+            <label class="frow direct-only"><span data-t="断句静音">断句静音</span><input type="range" id="sSilence" min="400" max="2000" step="50"><em class="val" id="silVal"></em></label>
           </div>
+          <div class="hint" data-t="✓ 改动即时生效">✓ 改动即时生效</div>
         </div>
       </section>
 
-      <!-- 联系页 -->
-      <section class="page" id="pg-contact">
+      <!-- ============ 帮助 ============ -->
+      <section class="page" id="pg-help">
+        <div class="card grow"><pre class="tutorial" id="tutorialText"></pre></div>
         <div class="card"><pre class="tutorial" id="contactText"></pre></div>
       </section>
     </main>
@@ -170,7 +231,6 @@
 </div>
 <div id="toast"></div>
 <script src="i18n.js"></script>
-<script src="terms.js"></script>
 <script src="store.js"></script>
 <script src="audio.js"></script>
 <script src="app.js"></script>

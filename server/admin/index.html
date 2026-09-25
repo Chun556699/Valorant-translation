@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>VTranslate 管理后台</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="admin.css">
+</head>
+<body>
+
+<!-- 登录 -->
+<div id="login" class="login hidden">
+  <form class="login-card" id="loginForm" autocomplete="off">
+    <div class="brand big"><span class="logo">V</span><b>VTranslate</b><em>Console</em></div>
+    <p class="muted">使用服务器环境变量 <code>ADMIN_TOKEN</code> 登录</p>
+    <input id="loginToken" type="password" placeholder="管理令牌" autofocus>
+    <button class="btn primary block" type="submit">登录</button>
+    <div class="err" id="loginErr"></div>
+  </form>
+</div>
+
+<!-- 主界面 -->
+<div id="shell" class="shell hidden">
+  <aside class="side">
+    <div class="brand"><span class="logo">V</span><b>VTranslate</b><em>Console</em></div>
+    <nav id="nav">
+      <a data-p="dash" class="on"><i class="ic ic-dash"></i>概览</a>
+      <a data-p="users"><i class="ic ic-users"></i>用户</a>
+      <a data-p="orders"><i class="ic ic-orders"></i>订单</a>
+      <a data-p="sessions"><i class="ic ic-live"></i>实时会话<span class="badge" id="liveBadge">0</span></a>
+      <a data-p="usage"><i class="ic ic-usage"></i>用量流水</a>
+      <a data-p="terms"><i class="ic ic-terms"></i>术语热词</a>
+      <a data-p="settings"><i class="ic ic-settings"></i>运营设置</a>
+    </nav>
+    <div class="side-foot">
+      <button class="btn ghost block" id="btnLogout">退出登录</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <!-- 概览 -->
+    <section class="page on" id="pg-dash">
+      <header class="ph"><h1>概览</h1><button class="btn" data-refresh="dash">刷新</button></header>
+      <div class="kpis" id="kpis"></div>
+      <div class="grid2">
+        <div class="card"><div class="card-h">近 14 天收入（元）</div><div class="chart" id="chRevenue"></div></div>
+        <div class="card"><div class="card-h">近 14 天翻译时长（分钟）</div><div class="chart" id="chUsage"></div></div>
+      </div>
+      <div class="grid2">
+        <div class="card"><div class="card-h">近 14 天新增用户</div><div class="chart" id="chUsers"></div></div>
+        <div class="card"><div class="card-h">系统状态</div><div id="sysInfo" class="sys"></div></div>
+      </div>
+    </section>
+
+    <!-- 用户 -->
+    <section class="page" id="pg-users">
+      <header class="ph"><h1>用户</h1>
+        <div class="tools">
+          <select id="uKind">
+            <option value="">全部</option><option value="account">注册账号</option>
+            <option value="guest">游客</option><option value="sub">订阅中</option>
+            <option value="banned">已封禁</option>
+          </select>
+          <input id="uQ" placeholder="用户名 / ID / 设备码 / 推广码 / 备注">
+          <button class="btn" id="uSearch">搜索</button>
+        </div>
+      </header>
+      <div class="card flush"><table class="tbl" id="uTbl"></table></div>
+      <div class="pager" id="uPager"></div>
+    </section>
+
+    <!-- 订单 -->
+    <section class="page" id="pg-orders">
+      <header class="ph"><h1>订单</h1>
+        <div class="tools">
+          <select id="oStatus">
+            <option value="">全部状态</option><option value="paid">已支付</option>
+            <option value="pending">待支付</option><option value="closed">已关闭</option>
+          </select>
+          <input id="oQ" placeholder="订单号 / 网关单号 / 用户名">
+          <button class="btn" id="oSearch">搜索</button>
+        </div>
+      </header>
+      <div class="card flush"><table class="tbl" id="oTbl"></table></div>
+      <div class="pager" id="oPager"></div>
+    </section>
+
+    <!-- 实时会话 -->
+    <section class="page" id="pg-sessions">
+      <header class="ph"><h1>实时会话</h1><span class="muted">每 5 秒自动刷新</span></header>
+      <div class="card flush"><table class="tbl" id="sTbl"></table></div>
+    </section>
+
+    <!-- 用量 -->
+    <section class="page" id="pg-usage">
+      <header class="ph"><h1>用量流水</h1>
+        <div class="tools"><input id="gUid" placeholder="用户 ID（留空为全部）"><button class="btn" id="gSearch">筛选</button></div>
+      </header>
+      <div class="card flush"><table class="tbl" id="gTbl"></table></div>
+      <div class="pager" id="gPager"></div>
+    </section>
+
+    <!-- 热词 -->
+    <section class="page" id="pg-terms">
+      <header class="ph"><h1>术语热词</h1>
+        <div class="tools">
+          <div class="seg" id="tTarget">
+            <button data-t="zh" class="on">队友 → 中文</button>
+            <button data-t="en">我 → 英文</button>
+          </div>
+          <input id="tQ" placeholder="搜索词条">
+        </div>
+      </header>
+      <p class="muted lead">热词会注入实时翻译模型的 <code>corpus.phrases</code>，显著提升特工名、地图、点位、枪械与战术黑话的识别和翻译准确度。修改后<b>新建立的翻译会话</b>立即生效，每种目标语言最多 <span id="tLimit">1000</span> 条。</p>
+      <div class="grid2 terms-grid">
+        <div class="card flush">
+          <div class="card-h pad">词条 <span class="muted" id="tCount"></span>
+            <span class="grow"></span>
+            <button class="btn sm danger" id="tDel" disabled>删除选中</button>
+            <button class="btn sm" id="tReset">恢复内置词表</button>
+          </div>
+          <div class="scroll"><table class="tbl" id="tTbl"></table></div>
+        </div>
+        <div class="card">
+          <div class="card-h">新增 / 批量导入</div>
+          <p class="muted">每行一条，格式 <code>原文=译文</code>，已存在的原文会被覆盖。</p>
+          <textarea id="tBulk" rows="12" placeholder="one shot=一枪残&#10;A main=A大&#10;drop me=给我发枪"></textarea>
+          <div class="row"><button class="btn primary" id="tAdd">保存词条</button><span class="muted" id="tMsg"></span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 设置 -->
+    <section class="page" id="pg-settings">
+      <header class="ph"><h1>运营设置</h1></header>
+      <div class="grid2">
+        <form class="card form" id="setForm">
+          <div class="card-h">运行时参数 <span class="muted">保存后立即生效，重启后保留</span></div>
+          <label>客户端公告<textarea name="announcement" rows="3" maxlength="500" placeholder="留空则不显示"></textarea></label>
+          <div class="fgrid">
+            <label>新用户免费额度（秒）<input name="trial_seconds" type="number" min="0"></label>
+            <label>免费额度有效期（天）<input name="trial_days" type="number" min="0"></label>
+            <label>余额单价（分 / 分钟）<input name="price_fen_per_minute" type="number" min="1"></label>
+            <label>推广返利（%）<input name="ref_bonus_percent" type="number" min="0" max="100"></label>
+            <label>每 IP 每日新游客上限<input name="guest_grants_per_ip_per_day" type="number" min="0"></label>
+            <label>队友断句静音（毫秒）<input name="mate_silence_ms" type="number" min="200" max="6000" step="50"></label>
+          </div>
+          <p class="muted">断句静音越短字幕出得越快，越长整句越完整；游戏短指令建议 700–900。</p>
+          <label class="chk"><input type="checkbox" name="allow_register"> 开放注册</label>
+          <label class="chk"><input type="checkbox" name="allow_guest"> 允许游客模式</label>
+          <div class="row"><button class="btn primary" type="submit">保存</button><span class="muted" id="setMsg"></span></div>
+        </form>
+        <div class="card">
+          <div class="card-h">商品（在 config.py 中配置）</div>
+          <table class="tbl" id="prodTbl"></table>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- 用户详情抽屉 -->
+<div class="drawer-mask hidden" id="drawerMask"></div>
+<aside class="drawer hidden" id="drawer">
+  <header class="ph"><h2 id="dTitle">用户</h2><button class="btn ghost" id="dClose">关闭</button></header>
+  <div id="dBody"></div>
+</aside>
+
+<div class="toast" id="toast"></div>
+<script src="admin.js"></script>
+</body>
+</html>

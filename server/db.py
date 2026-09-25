@@ -42,7 +42,32 @@ CREATE TABLE IF NOT EXISTS usage_logs (
     fen INTEGER NOT NULL DEFAULT 0,   -- 走余额时扣的分
     created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS terms (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    target TEXT NOT NULL,             -- 目标语言：zh=队友英语->中文，en=自己中文->英语
+    src TEXT NOT NULL,
+    dst TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    UNIQUE(target, src)
+);
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id);
+CREATE INDEX IF NOT EXISTS idx_orders_created ON orders(created_at);
+CREATE INDEX IF NOT EXISTS idx_usage_created ON usage_logs(created_at);
+CREATE INDEX IF NOT EXISTS idx_usage_user ON usage_logs(user_id);
 """
+
+# 老库增量迁移：列不存在才加
+_USER_COLUMNS = {
+    "banned": "INTEGER NOT NULL DEFAULT 0",
+    "last_active_at": "INTEGER NOT NULL DEFAULT 0",
+    "note": "TEXT NOT NULL DEFAULT ''",
+}
+
+PAGE_MAX = 200
 
 
 class DB:
@@ -70,6 +95,11 @@ class DB:
                     "CREATE UNIQUE INDEX IF NOT EXISTS idx_guest_device "
                     "ON users(device_id) WHERE username IS NULL")
                 self._conn.commit()
+            cols = {r[1] for r in self._conn.execute("PRAGMA table_info(users)")}
+            for name, ddl in _USER_COLUMNS.items():
+                if name not in cols:
+                    self._conn.execute(f"ALTER TABLE users ADD COLUMN {name} {ddl}")
+            self._conn.commit()
 
     def _q(self, sql: str, args=(), one=False):
         with self._lock:
@@ -289,6 +319,10 @@ class DB:
             changed = cur.rowcount > 0
         return self.get_order(out_trade_no) if changed else None
 
+    def close_order(self, out_trade_no) -> bool:
+        return self._x("UPDATE orders SET status='closed' WHERE out_trade_no=? "
+                       "AND status='pending'", (out_trade_no,)).rowcount > 0
+
     # ---------- 用量 ----------
     def log_usage(self, user_id: int, stream: str, seconds: int,
                   pool: str, fen: int = 0):
@@ -297,3 +331,172 @@ class DB:
             " VALUES(?,?,?,?,?,?)",
             (user_id, stream, seconds, pool, fen, int(time.time())),
         )
+
+    def touch_user(self, user_id: int):
+        self._x("UPDATE users SET last_active_at=? WHERE id=?",
+                (int(time.time()), user_id))
+
+    # ---------- 热词表 ----------
+    def terms_count(self) -> int:
+        return self._q("SELECT COUNT(*) c FROM terms", one=True)["c"]
+
+    def terms_for(self, target: str) -> dict:
+        rows = self._q("SELECT src, dst FROM terms WHERE target=? ORDER BY id",
+                       (target,))
+        return {r["src"]: r["dst"] for r in rows}
+
+    def terms_list(self, target: str = "", q: str = "") -> list[dict]:
+        sql, args = "SELECT * FROM terms WHERE 1=1", []
+        if target:
+            sql += " AND target=?"
+            args.append(target)
+        if q:
+            sql += " AND (src LIKE ? OR dst LIKE ?)"
+            args += [f"%{q}%", f"%{q}%"]
+        return [dict(r) for r in self._q(sql + " ORDER BY target, id", args)]
+
+    def terms_upsert(self, target: str, pairs: dict) -> int:
+        now = int(time.time())
+        with self._lock:
+            self._conn.executemany(
+                "INSERT INTO terms(target,src,dst,created_at) VALUES(?,?,?,?) "
+                "ON CONFLICT(target,src) DO UPDATE SET dst=excluded.dst",
+                [(target, s, d, now) for s, d in pairs.items()])
+            self._conn.commit()
+        return len(pairs)
+
+    def terms_delete(self, ids: list[int]) -> int:
+        if not ids:
+            return 0
+        marks = ",".join("?" * len(ids))
+        return self._x(f"DELETE FROM terms WHERE id IN ({marks})", ids).rowcount
+
+    def terms_clear(self, target: str = "") -> int:
+        if target:
+            return self._x("DELETE FROM terms WHERE target=?", (target,)).rowcount
+        return self._x("DELETE FROM terms").rowcount
+
+    # ---------- 运行时设置 ----------
+    def settings_all(self) -> dict:
+        return {r["key"]: r["value"] for r in self._q("SELECT * FROM settings")}
+
+    def setting_set(self, key: str, value: str):
+        self._x("INSERT INTO settings(key,value) VALUES(?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+
+    # ---------- 管理后台查询 ----------
+    @staticmethod
+    def _page(page: int, size: int) -> tuple[int, int]:
+        size = max(1, min(int(size or 20), PAGE_MAX))
+        return size, max(0, (max(1, int(page or 1)) - 1) * size)
+
+    def admin_users(self, q: str = "", page: int = 1, size: int = 20,
+                    kind: str = "") -> dict:
+        where, args = ["1=1"], []
+        if q:
+            where.append("(username LIKE ? OR device_id LIKE ? OR ref_code=? "
+                         "OR CAST(id AS TEXT)=? OR note LIKE ?)")
+            args += [f"%{q}%", f"%{q}%", q, q, f"%{q}%"]
+        if kind == "guest":
+            where.append("username IS NULL")
+        elif kind == "account":
+            where.append("username IS NOT NULL")
+        elif kind == "banned":
+            where.append("banned=1")
+        elif kind == "sub":
+            where.append("sub_expire_at > ?")
+            args.append(int(time.time()))
+        w = " AND ".join(where)
+        total = self._q(f"SELECT COUNT(*) c FROM users WHERE {w}", args, one=True)["c"]
+        size, off = self._page(page, size)
+        rows = self._q(
+            f"SELECT id,username,device_id,money_cents,credit_seconds,trial_seconds,"
+            f"trial_expire_at,sub_expire_at,ref_code,referred_by,ref_earned_fen,"
+            f"banned,last_active_at,note,created_at FROM users WHERE {w} "
+            f"ORDER BY id DESC LIMIT ? OFFSET ?", args + [size, off])
+        return {"total": total, "items": [dict(r) for r in rows]}
+
+    def admin_orders(self, q: str = "", status: str = "", page: int = 1,
+                     size: int = 20, user_id: int = 0) -> dict:
+        where, args = ["1=1"], []
+        if q:
+            where.append("(o.out_trade_no LIKE ? OR o.trade_no LIKE ? OR u.username LIKE ?)")
+            args += [f"%{q}%", f"%{q}%", f"%{q}%"]
+        if status:
+            where.append("o.status=?")
+            args.append(status)
+        if user_id:
+            where.append("o.user_id=?")
+            args.append(user_id)
+        w = " AND ".join(where)
+        base = f"FROM orders o LEFT JOIN users u ON u.id=o.user_id WHERE {w}"
+        total = self._q(f"SELECT COUNT(*) c {base}", args, one=True)["c"]
+        size, off = self._page(page, size)
+        rows = self._q(f"SELECT o.*, u.username {base} ORDER BY o.created_at DESC "
+                       f"LIMIT ? OFFSET ?", args + [size, off])
+        return {"total": total, "items": [dict(r) for r in rows]}
+
+    def admin_usage(self, user_id: int = 0, page: int = 1, size: int = 50) -> dict:
+        where, args = "1=1", []
+        if user_id:
+            where, args = "l.user_id=?", [user_id]
+        total = self._q(f"SELECT COUNT(*) c FROM usage_logs l WHERE {where}",
+                        args, one=True)["c"]
+        size, off = self._page(page, size)
+        rows = self._q(
+            f"SELECT l.*, u.username FROM usage_logs l LEFT JOIN users u "
+            f"ON u.id=l.user_id WHERE {where} ORDER BY l.id DESC LIMIT ? OFFSET ?",
+            args + [size, off])
+        return {"total": total, "items": [dict(r) for r in rows]}
+
+    def set_user_fields(self, user_id: int, **fields):
+        allowed = {"banned", "note", "password_hash", "token"}
+        cols = {k: v for k, v in fields.items() if k in allowed}
+        if not cols:
+            return
+        sets = ",".join(f"{k}=?" for k in cols)
+        self._x(f"UPDATE users SET {sets} WHERE id=?", [*cols.values(), user_id])
+
+    def stats(self, days: int = 14) -> dict:
+        now = int(time.time())
+        lt = time.localtime(now)
+        today0 = int(time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1)))
+        since = today0 - (days - 1) * 86400
+        fen = "CAST(ROUND(CAST(money AS REAL)*100) AS INTEGER)"
+        one = lambda sql, a=(): self._q(sql, a, one=True)[0] or 0  # noqa: E731
+        day = "date({col},'unixepoch','localtime')"
+
+        def series(sql, args):
+            return {r[0]: r[1] or 0 for r in self._q(sql, args)}
+
+        rev = series(f"SELECT {day.format(col='paid_at')} d, SUM({fen}) FROM orders "
+                     f"WHERE status='paid' AND paid_at>=? GROUP BY d", (since,))
+        use = series(f"SELECT {day.format(col='created_at')} d, SUM(seconds) FROM usage_logs "
+                     f"WHERE created_at>=? GROUP BY d", (since,))
+        reg = series(f"SELECT {day.format(col='created_at')} d, COUNT(*) FROM users "
+                     f"WHERE created_at>=? GROUP BY d", (since,))
+        labels = [time.strftime("%Y-%m-%d", time.localtime(since + i * 86400 + 3600))
+                  for i in range(days)]
+        return {
+            "users_total": one("SELECT COUNT(*) FROM users"),
+            "users_accounts": one("SELECT COUNT(*) FROM users WHERE username IS NOT NULL"),
+            "users_today": one("SELECT COUNT(*) FROM users WHERE created_at>=?", (today0,)),
+            "active_24h": one("SELECT COUNT(*) FROM users WHERE last_active_at>=?",
+                              (now - 86400,)),
+            "subs_active": one("SELECT COUNT(*) FROM users WHERE sub_expire_at>?", (now,)),
+            "revenue_total_fen": one(f"SELECT SUM({fen}) FROM orders WHERE status='paid'"),
+            "revenue_today_fen": one(f"SELECT SUM({fen}) FROM orders WHERE status='paid' "
+                                     f"AND paid_at>=?", (today0,)),
+            "orders_paid": one("SELECT COUNT(*) FROM orders WHERE status='paid'"),
+            "orders_pending": one("SELECT COUNT(*) FROM orders WHERE status='pending'"),
+            "usage_today_seconds": one("SELECT SUM(seconds) FROM usage_logs "
+                                       "WHERE created_at>=?", (today0,)),
+            "usage_total_seconds": one("SELECT SUM(seconds) FROM usage_logs"),
+            "balance_liability_fen": one("SELECT SUM(money_cents) FROM users"),
+            "series": {
+                "labels": labels,
+                "revenue_fen": [rev.get(d, 0) for d in labels],
+                "usage_seconds": [use.get(d, 0) for d in labels],
+                "new_users": [reg.get(d, 0) for d in labels],
+            },
+        }

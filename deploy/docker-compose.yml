@@ -1,0 +1,28 @@
+# 用法（在 deploy/ 目录下）：
+#   cp ../server/.env.example ../server/.env   # 填好密钥与 ADMIN_TOKEN
+#   docker compose up -d --build
+# 服务只监听本机 127.0.0.1:8765，由同机 Nginx 反代并提供 HTTPS（见 nginx.conf）。
+services:
+  vtranslate:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    image: vtranslate-server:latest
+    container_name: vtranslate
+    restart: unless-stopped
+    env_file: ../server/.env
+    environment:
+      DB_PATH: /data/billing.db
+      # 反代在同机：信任其转发的真实 IP（端口仅绑定 127.0.0.1，外部无法伪造）
+      TRUST_PROXY: "1"
+      FORWARDED_ALLOW_IPS: "*"
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - vt-data:/data
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+volumes:
+  vt-data:

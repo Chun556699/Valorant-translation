@@ -52,6 +52,50 @@ REF_BONUS_PERCENT = int(_env("REF_BONUS_PERCENT", "10"))
 ANNOUNCEMENT = _env("ANNOUNCEMENT", "")
 # 可供选择的播报音色（客户端下拉）
 VOICES = ["Cherry", "Tina", "Ethan", "Serena", "Kiki", "Anna"]
+# 队友流断句静音时长（毫秒）：越短出字越快，越长整句越完整。游戏短指令 700~900 较合适
+MATE_SILENCE_MS = int(_env("MATE_SILENCE_MS", "800"))
+# 开放注册 / 游客模式（可在管理后台随时切换）
+ALLOW_REGISTER = _env("ALLOW_REGISTER", "1") == "1"
+ALLOW_GUEST = _env("ALLOW_GUEST", "1") == "1"
+# 管理后台登录会话有效期（小时）
+ADMIN_SESSION_HOURS = int(_env("ADMIN_SESSION_HOURS", "12"))
+
+# 管理后台可在线修改的运行时参数：key -> (类型, 取值范围校验)
+# 修改后写入 settings 表并立即覆盖本模块同名大写变量，重启后仍生效
+RUNTIME = {
+    "announcement": (str, lambda v: len(v) <= 500),
+    "trial_seconds": (int, lambda v: 0 <= v <= 864000),
+    "trial_days": (int, lambda v: 0 <= v <= 3650),
+    "price_fen_per_minute": (int, lambda v: 1 <= v <= 100000),
+    "ref_bonus_percent": (int, lambda v: 0 <= v <= 100),
+    "guest_grants_per_ip_per_day": (int, lambda v: 0 <= v <= 100000),
+    "mate_silence_ms": (int, lambda v: 200 <= v <= 6000),
+    "allow_register": (bool, lambda v: True),
+    "allow_guest": (bool, lambda v: True),
+}
+
+
+def runtime_values() -> dict:
+    return {k: globals()[k.upper()] for k in RUNTIME}
+
+
+def apply_runtime(key: str, raw) -> object:
+    """校验并应用一个运行时参数，返回规范化后的值；非法抛 ValueError。"""
+    if key not in RUNTIME:
+        raise ValueError(f"未知参数 {key}")
+    typ, check = RUNTIME[key]
+    if typ is bool:
+        val = raw if isinstance(raw, bool) else str(raw).lower() in ("1", "true", "yes", "on")
+    elif typ is int:
+        if isinstance(raw, bool):
+            raise ValueError(f"{key} 须为整数")
+        val = int(raw)
+    else:
+        val = str(raw).strip()
+    if not check(val):
+        raise ValueError(f"{key} 超出允许范围")
+    globals()[key.upper()] = val
+    return val
 
 # ---- 商品表 ----
 # kind=money 余额充值（分）；kind=card 时长卡（秒）；kind=sub 订阅（天）

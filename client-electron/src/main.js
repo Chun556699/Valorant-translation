@@ -28,32 +28,83 @@ function writeCfg(patch) {
 }
 
 /* renderer 可写的配置键白名单（仅设置页字段，其余一律忽略） */
+/* token/username 只由主进程在登录成功时写入（srv:request），renderer 不可写也读不到 token */
 const CFG_SETTABLE = new Set([
   'ui_lang', 'mode', 'dash_key', 'dash_ws_url', 'dash_model', 'server_url',
-  'token', 'username', 'hotkey', 'target_mate', 'target_self',
+  'hotkey', 'target_mate', 'target_self',
   'mate_enabled', 'running', 'voice', 'play_audio',
   'auto_copy', 'mate_filter', 'overlay_opacity', 'click_through',
   'max_bubbles', 'mic_device', 'loopback_device', 'output_device',
-  'overlay_src_color', 'overlay_dst_color',
+  'overlay_src_color', 'overlay_dst_color', 'overlay_font_scale',
+  'overlay_fade_sec', 'overlay_show_src', 'mate_silence_ms',
 ]);
-/* session:start 只允许 renderer 传这些非敏感覆盖项，其余一律读磁盘配置 */
+/* session:start 只允许 renderer 传这些非敏感覆盖项，其余一律读磁盘配置。
+ * server_url 不在其中：中转连接携带 token，目标地址只能来自磁盘配置 */
 const SESSION_OPTS = new Set([
-  'mode', 'target_mate', 'target_self', 'voice', 'play_audio',
-  'mate_enabled', 'server_url',
+  'mode', 'target_mate', 'target_self', 'voice', 'play_audio', 'mate_enabled',
 ]);
+/* 未保存过的字段在主进程侧的兜底（与 renderer/store.js DEFAULTS 保持一致） */
+const SESSION_DEFAULTS = {
+  mode: 'server', target_mate: 'zh', target_self: 'en', voice: 'Cherry',
+  dash_ws_url: 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime',
+  dash_model: 'qwen3.8-livetranslate-flash-realtime', mate_silence_ms: 800,
+};
+const sessionCfg = () => {
+  const c = { ...SESSION_DEFAULTS, ...readCfg() };
+  for (const k of Object.keys(SESSION_DEFAULTS)) if (c[k] === '' || c[k] == null) c[k] = SESSION_DEFAULTS[k];
+  return c;
+};
 function maskCfg(c) {
   /* 下发给 renderer 的配置：抹掉密钥，只留"是否已保存"标记 */
-  const masked = { ...c, dash_key: '' };
+  const masked = { ...c, dash_key: '', token: '' };
   masked.has_dash_key = !!(c.dash_key && String(c.dash_key).trim());
+  masked.has_token = !!c.token;
   return masked;
 }
 
+/* ---------- 计费服务器 HTTP（主进程发起：无 CORS 限制，token 不出主进程） ---------- */
+const SRV_PATHS = /^\/api\/(meta|me|products|referral\/stats|auth\/(login|register|guest)|pay\/(create|status))(\?[\w=&.%-]*)?$/;
+ipcMain.handle('srv:request', async (_e, req) => {
+  const { path: p, method = 'GET', body } = req || {};
+  if (typeof p !== 'string' || !SRV_PATHS.test(p) || !['GET', 'POST'].includes(method))
+    return { ok: false, status: 0, data: { msg: 'path not allowed' } };
+  const cfg = readCfg();
+  const base = String(cfg.server_url || '').trim().replace(/\/+$/, '');
+  if (!/^https?:\/\/[^\s/]+/.test(base))
+    return { ok: false, status: 0, data: { msg: '服务器地址须以 http(s):// 开头' } };
+  const headers = { 'Content-Type': 'application/json' };
+  if (cfg.token && !p.startsWith('/api/auth/')) headers.Authorization = `Bearer ${cfg.token}`;
+  const t0 = Date.now();
+  try {
+    const r = await fetch(base + p, {
+      method, headers, body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(12000),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (r.ok && data.code === 1 && p.startsWith('/api/auth/') && data.token)
+      writeCfg({ token: data.token, username: data.username || '' });
+    delete data.token;
+    return { ok: r.ok && data.code === 1, status: r.status, data, ms: Date.now() - t0 };
+  } catch (e) {
+    return { ok: false, status: 0,
+             data: { msg: e.name === 'TimeoutError' ? '连接服务器超时' : String(e.message || e) } };
+  }
+});
+ipcMain.handle('srv:logout', () => maskCfg(writeCfg({ token: '', username: '' })));
+
 /* ---------- 悬浮窗 ---------- */
 function createOverlay() {
+  const saved = readCfg().overlay_bounds;
+  const wa = screen.getPrimaryDisplay().workArea;
+  const onScreen = saved && screen.getAllDisplays().some((d) =>
+    saved.x >= d.workArea.x - 40 && saved.y >= d.workArea.y - 20 &&
+    saved.x < d.workArea.x + d.workArea.width - 60 &&
+    saved.y < d.workArea.y + d.workArea.height - 40);
   overlayWin = new BrowserWindow({
-    width: 340, height: 240,
-    x: screen.getPrimaryDisplay().workAreaSize.width - 360,
-    y: 60,
+    width: onScreen ? saved.width : 420, height: onScreen ? saved.height : 280,
+    x: onScreen ? saved.x : wa.x + wa.width - 440,
+    y: onScreen ? saved.y : wa.y + 60,
+    minWidth: 260, minHeight: 34,
     frame: false, transparent: true, alwaysOnTop: true,
     skipTaskbar: true, resizable: true, hasShadow: false,
     webPreferences: {
@@ -64,11 +115,24 @@ function createOverlay() {
   overlayWin.setAlwaysOnTop(true, 'screen-saver');
   overlayWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   overlayWin.loadFile(path.join(__dirname, 'renderer', 'overlay.html'));
+  // 悬浮窗可能晚于主窗加载完成：就绪后让主窗重推一次配置/状态
+  overlayWin.webContents.on('did-finish-load', () => send('ovctl', 'ready'));
   if (overlayTopTimer) clearInterval(overlayTopTimer);
   overlayTopTimer = setInterval(() => {
     if (overlayWin && !overlayWin.isDestroyed())
       overlayWin.setAlwaysOnTop(true, 'screen-saver');
   }, 1500);
+  // 记住用户拖动/缩放后的位置（去抖写盘）
+  let boundsTimer = null;
+  const saveBounds = () => {
+    clearTimeout(boundsTimer);
+    boundsTimer = setTimeout(() => {
+      if (overlayWin && !overlayWin.isDestroyed())
+        writeCfg({ overlay_bounds: overlayWin.getBounds() });
+    }, 500);
+  };
+  overlayWin.on('moved', saveBounds);
+  overlayWin.on('resized', saveBounds);
   overlayWin.on('closed', () => {
     overlayWin = null;
     if (overlayTopTimer) { clearInterval(overlayTopTimer); overlayTopTimer = null; }
@@ -81,8 +145,9 @@ let overlayTopTimer = null;
 /* ---------- 主窗 ---------- */
 function createMain() {
   mainWin = new BrowserWindow({
-    width: 760, height: 500, minWidth: 600, minHeight: 400,
-    frame: false, backgroundColor: '#f4f5f7',
+    width: 980, height: 640, minWidth: 820, minHeight: 540,
+    frame: false, backgroundColor: '#0b1016',
+    icon: path.join(__dirname, '..', 'assets', 'icon.png'),
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -274,7 +339,7 @@ ipcMain.on('session:start', (_e, payload) => {
   const { stream } = payload || {};
   if (stream !== 'mate' && stream !== 'self') return;
   const opts = (payload && payload.opts) || {};
-  const cfg = readCfg();
+  const cfg = sessionCfg();
   for (const k of Object.keys(opts))
     if (SESSION_OPTS.has(k)) cfg[k] = opts[k];
   try {
@@ -315,7 +380,7 @@ ipcMain.on('session:clear', (_e, stream) => {
 // URL/模型一律用磁盘配置；仅允许 renderer 传入待测的新 dash_key（未保存的输入）。
 ipcMain.handle('session:test', async (_e, opts) => {
   const WebSocket = require('ws');
-  const stored = readCfg();
+  const stored = sessionCfg();
   const key = (opts && String(opts.dash_key || '').trim()) || stored.dash_key;
   return new Promise((res) => {
     const t0 = Date.now();

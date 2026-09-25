@@ -3,7 +3,10 @@
 运行：uvicorn app:app --host 0.0.0.0 --port 8765
 """
 import hashlib
+import hmac
+import json
 import logging
+import os
 import secrets
 import threading
 import time
@@ -15,10 +18,13 @@ from urllib.parse import parse_qsl
 
 import httpx
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import PlainTextResponse, JSONResponse
+from fastapi.responses import PlainTextResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import config
+import relay
+import valorant_terms
 from db import DB
 from epay import EPayClient
 from relay import RelaySession
@@ -30,6 +36,43 @@ log = logging.getLogger("app")
 db = DB(config.DB_PATH)
 epay = EPayClient(config.ZPAY_BASE_URL, config.ZPAY_PID, config.ZPAY_KEY)
 http: httpx.AsyncClient | None = None   # 在 lifespan 启动时创建
+ADMIN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "admin")
+TARGETS = ("zh", "en", "ja", "ko", "ru", "fr", "de", "es", "pt")
+
+
+# ---------------- 运行时设置 / 热词 ----------------
+def _load_runtime():
+    """settings 表覆盖环境变量默认值（管理后台改过的参数重启后依然生效）。"""
+    for k, v in db.settings_all().items():
+        if k in config.RUNTIME:
+            try:
+                config.apply_runtime(k, json.loads(v))
+            except (ValueError, TypeError):
+                log.warning("忽略非法运行时参数 %s=%r", k, v)
+
+
+def _seed_terms():
+    """首次启动把内置游戏术语写入热词表；之后以库为准（管理员删光也不回灌）。"""
+    if db.settings_all().get("terms_seeded"):
+        return
+    if db.terms_count() == 0:
+        db.terms_upsert("zh", valorant_terms.TERMS_EN2ZH)
+        db.terms_upsert("en", valorant_terms.TERMS_ZH2EN)
+    db.setting_set("terms_seeded", "1")
+
+
+_terms_cache: dict[str, dict] = {}
+
+
+def _terms_for(target: str) -> dict:
+    if target not in _terms_cache:
+        _terms_cache[target] = db.terms_for(target)
+    return _terms_cache[target]
+
+
+_load_runtime()
+_seed_terms()
+relay.terms_provider = _terms_for
 
 
 @asynccontextmanager
@@ -37,11 +80,31 @@ async def lifespan(_app: FastAPI):
     # httpx 客户端随应用生命周期创建/关闭（替代已废弃的 on_event 写法）
     global http
     http = httpx.AsyncClient()
+    if config.ADMIN_TOKEN and len(config.ADMIN_TOKEN) < 16:
+        log.warning("ADMIN_TOKEN 过短（<16 位），管理后台暴露在公网时极易被爆破")
+    if not config.ADMIN_TOKEN:
+        log.warning("未设置 ADMIN_TOKEN：管理后台 /admin 已禁用")
     yield
     await http.aclose()
 
 
-app = FastAPI(title="VTranslate Billing Server", lifespan=lifespan)
+app = FastAPI(title="VTranslate Billing Server", lifespan=lifespan,
+              docs_url=None, redoc_url=None, openapi_url=None)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    resp = await call_next(request)
+    if request.url.path.startswith("/admin"):
+        resp.headers["Content-Security-Policy"] = (
+            "default-src 'self'; img-src 'self' data:; style-src 'self'; "
+            "script-src 'self'; connect-src 'self'; frame-ancestors 'none'; "
+            "base-uri 'none'; form-action 'self'")
+        resp.headers["X-Frame-Options"] = "DENY"
+        resp.headers["Referrer-Policy"] = "no-referrer"
+        resp.headers["Cache-Control"] = "no-cache"
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    return resp
 
 
 # ---------------- 工具 ----------------
@@ -62,7 +125,8 @@ def _check_pwd(password: str, stored: str) -> bool:
 
 def _auth(req: Request):
     token = req.headers.get("Authorization", "").removeprefix("Bearer ").strip()
-    return db.user_by_token(token) if token else None
+    user = db.user_by_token(token) if token else None
+    return None if user and user.get("banned") else user
 
 
 # ---------------- 限流（内存滑动窗口，按客户端 IP） ----------------
@@ -155,7 +219,15 @@ def meta():
     return {"code": 1, "announcement": config.ANNOUNCEMENT,
             "price_fen_per_minute": config.PRICE_FEN_PER_MINUTE,
             "voices": config.VOICES,
+            "targets": list(TARGETS),
+            "allow_register": config.ALLOW_REGISTER,
+            "allow_guest": config.ALLOW_GUEST,
             "trial_seconds": config.TRIAL_SECONDS}
+
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True, "sessions": len(relay.ACTIVE)}
 
 
 # ---------------- 认证 ----------------
@@ -170,6 +242,8 @@ class RegisterReq(BaseModel):
 def register(req: RegisterReq, request: Request):
     if _rate_limit(request, 10):
         return _too_many()
+    if not config.ALLOW_REGISTER:
+        return JSONResponse({"code": 0, "msg": "暂未开放注册"}, status_code=403)
     username = req.username.strip()
     if not (3 <= len(username) <= 32):
         return JSONResponse({"code": 0, "msg": "用户名需 3-32 位"}, status_code=400)
@@ -206,6 +280,8 @@ def login(req: LoginReq, request: Request):
     if not user or not user.get("password_hash") \
             or not _check_pwd(req.password, user["password_hash"]):
         return JSONResponse({"code": 0, "msg": "用户名或密码错误"}, status_code=401)
+    if user.get("banned"):
+        return JSONResponse({"code": 0, "msg": "账号已被封禁"}, status_code=403)
     # 每次登录换新 token
     db._x("UPDATE users SET token=? WHERE id=?", (secrets.token_hex(24), user["id"]))
     user = db.user_by_id(user["id"])
@@ -222,6 +298,8 @@ def guest(req: GuestReq, request: Request):
     每分钟限流放宽到 60：真正防线是每 IP 每 24h 新建游客配额。"""
     if _rate_limit(request, 60):
         return _too_many()
+    if not config.ALLOW_GUEST:
+        return JSONResponse({"code": 0, "msg": "游客模式已关闭，请注册账号"}, status_code=403)
     if not req.device_id or len(req.device_id) > 64:
         return JSONResponse({"code": 0, "msg": "device_id 非法"}, status_code=400)
     # 先查配额再落库：超限直接拒绝，防止 429 后重试同 device_id 白拿已有账号 token
@@ -297,7 +375,9 @@ async def pay_create(req: PayCreateReq, request: Request):
     db.create_order(out_trade_no, user["id"], req.product_code,
                     product["name"], product["money"], req.pay_type)
 
-    clientip = request.client.host if request.client else "127.0.0.1"
+    clientip = _client_ip(request)
+    if clientip == "unknown":
+        clientip = "127.0.0.1"
     page_url = epay.build_page_pay_url(
         name=product["name"], money=product["money"], out_trade_no=out_trade_no,
         pay_type=req.pay_type, notify_url=config.ZPAY_NOTIFY_URL,
@@ -407,7 +487,384 @@ async def pay_status(out_trade_no: str, request: Request):
     return {"code": 1, "status": order["status"], **_entitlement(fresh)}
 
 
-# ---------------- 管理（手动发放，调试用） ----------------
+# ---------------- 管理后台 API ----------------
+# 鉴权：先用 ADMIN_TOKEN 登录换取短期会话（X-Admin-Session），
+# 兼容脚本直接带 X-Admin-Token。未设置 ADMIN_TOKEN 时整个后台禁用。
+_admin_sessions: dict[str, float] = {}
+_admin_lock = threading.Lock()
+
+
+def _token_ok(tok: str) -> bool:
+    return bool(config.ADMIN_TOKEN and tok) and hmac.compare_digest(
+        tok.encode(), config.ADMIN_TOKEN.encode())
+
+
+def _is_admin(req: Request) -> bool:
+    if not config.ADMIN_TOKEN:
+        return False
+    sess = req.headers.get("X-Admin-Session", "")
+    if sess:
+        with _admin_lock:
+            exp = _admin_sessions.get(sess)
+            if exp and exp > time.time():
+                return True
+            _admin_sessions.pop(sess, None)
+        return False
+    return _token_ok(req.headers.get("X-Admin-Token", ""))
+
+
+def _admin_denied():
+    return JSONResponse({"code": 0, "msg": "未授权或登录已过期"}, status_code=401)
+
+
+def _bad(msg: str, status: int = 400):
+    return JSONResponse({"code": 0, "msg": msg}, status_code=status)
+
+
+class AdminLoginReq(BaseModel):
+    token: str
+
+
+@app.post("/api/admin/login")
+def admin_login(req: AdminLoginReq, request: Request):
+    if _rate_limit(request, 5):
+        return _too_many()
+    if not config.ADMIN_TOKEN:
+        return _bad("管理后台未启用（服务器未设置 ADMIN_TOKEN）", 403)
+    if not _token_ok(req.token.strip()):
+        log.warning("管理后台登录失败 ip=%s", _client_ip(request))
+        return _bad("令牌错误", 401)
+    sess = secrets.token_urlsafe(32)
+    ttl = config.ADMIN_SESSION_HOURS * 3600
+    now = time.time()
+    with _admin_lock:
+        for k in [k for k, v in _admin_sessions.items() if v <= now]:
+            _admin_sessions.pop(k, None)
+        _admin_sessions[sess] = now + ttl
+    log.info("管理后台登录 ip=%s", _client_ip(request))
+    return {"code": 1, "session": sess, "expires_in": ttl}
+
+
+@app.post("/api/admin/logout")
+def admin_logout(request: Request):
+    with _admin_lock:
+        _admin_sessions.pop(request.headers.get("X-Admin-Session", ""), None)
+    return {"code": 1}
+
+
+def _public_user(u: dict) -> dict:
+    return {k: v for k, v in u.items() if k not in ("password_hash", "token")}
+
+
+@app.get("/api/admin/stats")
+def admin_stats(request: Request):
+    if not _is_admin(request):
+        return _admin_denied()
+    s = db.stats()
+    s["sessions_live"] = len(relay.ACTIVE)
+    s["system"] = {
+        "model": config.TRANSLATE_MODEL,
+        "mock_upstream": config.MOCK_UPSTREAM,
+        "dashscope_key": bool(config.DASHSCOPE_API_KEY),
+        "zpay": bool(config.ZPAY_PID and config.ZPAY_KEY and config.ZPAY_NOTIFY_URL),
+        "trust_proxy": config.TRUST_PROXY,
+        "terms_zh": len(_terms_for("zh")), "terms_en": len(_terms_for("en")),
+    }
+    return {"code": 1, **s}
+
+
+@app.get("/api/admin/users")
+def admin_users(request: Request, q: str = "", kind: str = "",
+                page: int = 1, size: int = 20):
+    if not _is_admin(request):
+        return _admin_denied()
+    return {"code": 1, **db.admin_users(q.strip(), page, size, kind)}
+
+
+def _live_of(uid: int) -> list:
+    return [s for s in list(relay.ACTIVE.values()) if s.user_id == uid]
+
+
+@app.get("/api/admin/users/{uid}")
+def admin_user_detail(uid: int, request: Request):
+    if not _is_admin(request):
+        return _admin_denied()
+    user = db.user_by_id(uid)
+    if not user:
+        return _bad("用户不存在", 404)
+    return {"code": 1, "user": _public_user(user), "entitlement": _entitlement(user),
+            "referral": db.ref_stats(uid),
+            "orders": db.admin_orders(user_id=uid, size=10)["items"],
+            "usage": db.admin_usage(user_id=uid, size=20)["items"],
+            "sessions": [s.info() for s in _live_of(uid)]}
+
+
+class AdjustReq(BaseModel):
+    fen: int = 0                 # 余额增减（分，可负）
+    seconds: int = 0             # 时长卡增减（秒，可负）
+    sub_days: int = 0            # 订阅增减（天，可负）
+    trial_seconds: int = -1      # >=0 时直接设定免费额度
+    trial_days: int = -1
+    note: str | None = None
+
+
+@app.post("/api/admin/users/{uid}/adjust")
+def admin_adjust(uid: int, req: AdjustReq, request: Request):
+    if not _is_admin(request):
+        return _admin_denied()
+    if not db.user_by_id(uid):
+        return _bad("用户不存在", 404)
+    if abs(req.fen) > 10_000_000 or abs(req.seconds) > 100_000_000 \
+            or abs(req.sub_days) > 3650:
+        return _bad("数值超出范围")
+    if req.fen:
+        db.add_money(uid, req.fen)
+    if req.seconds:
+        db.add_credits(uid, req.seconds)
+    if req.sub_days:
+        db.extend_sub(uid, req.sub_days)
+    if req.trial_seconds >= 0:
+        db.set_trial(uid, req.trial_seconds,
+                     req.trial_days if req.trial_days >= 0 else config.TRIAL_DAYS)
+    if req.note is not None:
+        db.set_user_fields(uid, note=req.note.strip()[:200])
+    log.info("管理员调整用户 #%s: %s", uid, req.model_dump(exclude_defaults=True))
+    return {"code": 1, "entitlement": _entitlement(db.user_by_id(uid))}
+
+
+async def _kick_user(uid: int, code: str, msg: str) -> int:
+    live = _live_of(uid)
+    for s in live:
+        await s.kick(code, msg)
+    return len(live)
+
+
+class BanReq(BaseModel):
+    banned: bool
+
+
+@app.post("/api/admin/users/{uid}/ban")
+async def admin_ban(uid: int, req: BanReq, request: Request):
+    if not _is_admin(request):
+        return _admin_denied()
+    if not db.user_by_id(uid):
+        return _bad("用户不存在", 404)
+    fields = {"banned": 1 if req.banned else 0}
+    if req.banned:
+        fields["token"] = secrets.token_hex(24)   # 旧 token 立即失效
+    db.set_user_fields(uid, **fields)
+    kicked = await _kick_user(uid, "banned", "账号已被封禁") if req.banned else 0
+    log.info("管理员%s用户 #%s", "封禁" if req.banned else "解封", uid)
+    return {"code": 1, "kicked": kicked}
+
+
+@app.post("/api/admin/users/{uid}/kick")
+async def admin_kick_user(uid: int, request: Request):
+    if not _is_admin(request):
+        return _admin_denied()
+    if not db.user_by_id(uid):
+        return _bad("用户不存在", 404)
+    db.set_user_fields(uid, token=secrets.token_hex(24))
+    return {"code": 1, "kicked": await _kick_user(uid, "kicked", "登录已失效，请重新登录")}
+
+
+class PasswordReq(BaseModel):
+    password: str
+
+
+@app.post("/api/admin/users/{uid}/password")
+def admin_password(uid: int, req: PasswordReq, request: Request):
+    if not _is_admin(request):
+        return _admin_denied()
+    user = db.user_by_id(uid)
+    if not user or not user.get("username"):
+        return _bad("仅注册账号可重置密码", 404)
+    if len(req.password) < 6:
+        return _bad("密码至少 6 位")
+    db.set_user_fields(uid, password_hash=_hash_pwd(req.password),
+                       token=secrets.token_hex(24))
+    return {"code": 1}
+
+
+@app.get("/api/admin/orders")
+def admin_orders(request: Request, q: str = "", status: str = "",
+                 page: int = 1, size: int = 20):
+    if not _is_admin(request):
+        return _admin_denied()
+    return {"code": 1, **db.admin_orders(q.strip(), status, page, size)}
+
+
+@app.post("/api/admin/orders/{otn}/fulfill")
+def admin_fulfill(otn: str, request: Request):
+    """回调丢失且确认已收款时手动补单（仅 pending 生效，天然防重复发货）。"""
+    if not _is_admin(request):
+        return _admin_denied()
+    paid = db.mark_paid(otn, "manual")
+    if not paid:
+        return _bad("订单不存在或不是待支付状态")
+    _fulfill_order(paid)
+    log.info("管理员手动补单 %s", otn)
+    return {"code": 1}
+
+
+@app.post("/api/admin/orders/{otn}/sync")
+async def admin_sync_order(otn: str, request: Request):
+    if not _is_admin(request):
+        return _admin_denied()
+    order = db.get_order(otn)
+    if not order:
+        return _bad("订单不存在", 404)
+    if order["status"] != "pending":
+        return {"code": 1, "status": order["status"]}
+    try:
+        data = await epay.query_order(http, otn)
+    except Exception as e:
+        return _bad(f"查单失败: {e}", 502)
+    if str(data.get("status")) == "1":
+        paid = db.mark_paid(otn, str(data.get("trade_no", "")))
+        if paid:
+            _fulfill_order(paid)
+        return {"code": 1, "status": "paid"}
+    return {"code": 1, "status": "pending", "gateway": data.get("msg", "")}
+
+
+@app.post("/api/admin/orders/{otn}/close")
+def admin_close_order(otn: str, request: Request):
+    if not _is_admin(request):
+        return _admin_denied()
+    if not db.close_order(otn):
+        return _bad("仅待支付订单可关闭")
+    return {"code": 1}
+
+
+@app.get("/api/admin/usage")
+def admin_usage(request: Request, user_id: int = 0, page: int = 1, size: int = 50):
+    if not _is_admin(request):
+        return _admin_denied()
+    return {"code": 1, **db.admin_usage(user_id, page, size)}
+
+
+@app.get("/api/admin/sessions")
+def admin_sessions(request: Request):
+    if not _is_admin(request):
+        return _admin_denied()
+    return {"code": 1, "items": [s.info() for s in list(relay.ACTIVE.values())]}
+
+
+@app.post("/api/admin/sessions/{sid}/kick")
+async def admin_kick_session(sid: int, request: Request):
+    if not _is_admin(request):
+        return _admin_denied()
+    s = relay.ACTIVE.get(sid)
+    if not s:
+        return _bad("会话不存在或已结束", 404)
+    await s.kick()
+    return {"code": 1}
+
+
+# ---- 热词表 ----
+TERM_MAX_LEN = 100
+
+
+class TermsReq(BaseModel):
+    target: str
+    pairs: dict[str, str]
+
+
+def _valid_target(t: str) -> bool:
+    return t in TARGETS
+
+
+@app.get("/api/admin/terms")
+def admin_terms(request: Request, target: str = "", q: str = ""):
+    if not _is_admin(request):
+        return _admin_denied()
+    return {"code": 1, "items": db.terms_list(target, q.strip()),
+            "limit": relay.MAX_PHRASES}
+
+
+@app.post("/api/admin/terms")
+def admin_terms_upsert(req: TermsReq, request: Request):
+    if not _is_admin(request):
+        return _admin_denied()
+    if not _valid_target(req.target):
+        return _bad("目标语言不支持")
+    pairs = {s.strip(): d.strip() for s, d in req.pairs.items()
+             if s.strip() and d.strip()}
+    if not pairs:
+        return _bad("没有有效词条")
+    if any(len(s) > TERM_MAX_LEN or len(d) > TERM_MAX_LEN for s, d in pairs.items()):
+        return _bad(f"单个词条不超过 {TERM_MAX_LEN} 字")
+    existing = db.terms_for(req.target)
+    new_keys = set(pairs) - set(existing)
+    if len(existing) + len(new_keys) > relay.MAX_PHRASES:
+        return _bad(f"每种目标语言最多 {relay.MAX_PHRASES} 条热词")
+    n = db.terms_upsert(req.target, pairs)
+    _terms_cache.clear()
+    return {"code": 1, "count": n}
+
+
+class IdsReq(BaseModel):
+    ids: list[int]
+
+
+@app.post("/api/admin/terms/delete")
+def admin_terms_delete(req: IdsReq, request: Request):
+    if not _is_admin(request):
+        return _admin_denied()
+    n = db.terms_delete(req.ids[:5000])
+    _terms_cache.clear()
+    return {"code": 1, "deleted": n}
+
+
+class TargetReq(BaseModel):
+    target: str
+
+
+@app.post("/api/admin/terms/reset")
+def admin_terms_reset(req: TargetReq, request: Request):
+    """恢复某目标语言的内置游戏术语（清空后重新写入）。"""
+    if not _is_admin(request):
+        return _admin_denied()
+    builtin = valorant_terms.for_target(req.target)
+    if not builtin:
+        return _bad("该目标语言没有内置词表")
+    db.terms_clear(req.target)
+    db.terms_upsert(req.target, builtin)
+    _terms_cache.clear()
+    return {"code": 1, "count": len(builtin)}
+
+
+# ---- 运行时参数 ----
+@app.get("/api/admin/settings")
+def admin_settings(request: Request):
+    if not _is_admin(request):
+        return _admin_denied()
+    return {"code": 1, "values": config.runtime_values(),
+            "products": config.PRODUCTS, "voices": config.VOICES}
+
+
+@app.put("/api/admin/settings")
+def admin_settings_put(body: dict, request: Request):
+    if not _is_admin(request):
+        return _admin_denied()
+    # 任一项非法则整体回滚，避免半截生效
+    backup = config.runtime_values()
+    applied = {}
+    try:
+        for k, v in body.items():
+            applied[k] = config.apply_runtime(k, v)
+    except (ValueError, TypeError) as e:
+        for k, v in backup.items():
+            config.apply_runtime(k, v)
+        return _bad(str(e))
+    for k, v in applied.items():
+        db.setting_set(k, json.dumps(v, ensure_ascii=False))
+    log.info("管理员修改运行时参数: %s", list(applied))
+    return {"code": 1, "values": config.runtime_values()}
+
+
+# ---- 兼容脚本：一次性发放 ----
 class GrantReq(BaseModel):
     username: str = ""
     device_id: str = ""
@@ -420,7 +877,7 @@ class GrantReq(BaseModel):
 
 @app.post("/api/admin/grant")
 def admin_grant(req: GrantReq, request: Request):
-    if not config.ADMIN_TOKEN or request.headers.get("X-Admin-Token") != config.ADMIN_TOKEN:
+    if not _is_admin(request):
         return JSONResponse({"code": 0, "msg": "forbidden"}, status_code=403)
     user = (db.user_by_username(req.username) if req.username
             else db.create_guest(req.device_id or uuid.uuid4().hex, 0, 0)[0])
@@ -446,21 +903,37 @@ async def ws_translate(ws: WebSocket, token: str = "", stream: str = "mate",
     # 优先取 Authorization: Bearer，兼容 ?token= 查询参数（浏览器客户端）
     hdr = ws.headers.get("Authorization", "").removeprefix("Bearer ").strip()
     user = db.user_by_token(hdr or token)
-    if not user:
-        await ws.send_text('{"type":"error","code":"unauthorized","msg":"token 无效"}')
+    if not user or user.get("banned"):
+        code, msg = ("banned", "账号已被封禁") if user else ("unauthorized", "token 无效")
+        await ws.send_text(json.dumps({"type": "error", "code": code, "msg": msg},
+                                      ensure_ascii=False))
         await ws.close()
         return
     if stream not in ("mate", "self"):
         stream = "mate"
-    if target not in ("zh", "en", "ja", "ko", "ru", "fr", "de", "es", "pt"):
+    if target not in TARGETS:
         target = "zh"
     if voice not in config.VOICES:
         voice = config.VOICES[0] if config.VOICES else "Cherry"
     session = RelaySession(ws, user, stream, target, db,
                            voice=voice, want_audio=bool(audio))
+    session.client_ip = ws.client.host if ws.client else ""
+    if config.TRUST_PROXY:
+        xff = ws.headers.get("X-Forwarded-For", "")
+        session.client_ip = xff.split(",")[0].strip() or session.client_ip
     try:
         await session.run()
     except WebSocketDisconnect:
         pass
     finally:
         await session.close()
+
+
+# ---------------- 管理后台静态页 ----------------
+@app.get("/")
+def root():
+    return RedirectResponse("/admin/")
+
+
+if os.path.isdir(ADMIN_DIR):
+    app.mount("/admin", StaticFiles(directory=ADMIN_DIR, html=True), name="admin")

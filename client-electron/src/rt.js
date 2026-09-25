@@ -35,11 +35,85 @@ function errText(ev) {
   return m ? `[${t}] ${m}` : JSON.stringify(ev).slice(0, 200);
 }
 
-function sessionConfig(target, voice, wantAudio, stream, phrases, manual) {
+/* 上游事件 -> 归一化 seg（与服务端 relay.EventNormalizer 同逻辑）。
+ * qwen3.8：speaker_id 只在 speech_started（带 item_id）里；原文事件带同一 item_id；
+ * 译文 item 经 conversation.item.created.previous_item_id 指回原文 item。
+ * 按 item 关联后，多人同时说话各自成段，不会串进同一个气泡。 */
+class EventNormalizer {
+  constructor() {
+    this.spkByItem = new Map(); this.srcOf = new Map();
+    this.lastSrc = null; this.lastSpk = null;
+  }
+  _put(m, k, v) {
+    m.delete(k); m.set(k, v);
+    if (m.size > 256) m.delete(m.keys().next().value);
+  }
+  _spk(item, ev) {
+    let s = item ? this.spkByItem.get(item) : undefined;
+    if (s == null) {
+      s = deepFindSpeaker(ev);
+      if (s != null && item) this._put(this.spkByItem, item, s);
+    }
+    if (s == null && item && item === this.lastSrc) s = this.lastSpk;
+    return s ?? null;
+  }
+  _srcForDst(tid) {
+    if (!tid) return this.lastSrc;
+    let sid = this.srcOf.get(tid);
+    if (sid == null) { sid = this.lastSrc || tid; this._put(this.srcOf, tid, sid); }
+    return sid;
+  }
+  feed(ev) {
+    const t = ev.type || "";
+    if (t === "input_audio_buffer.speech_started") {
+      const item = ev.item_id || null;
+      let spk = ev.speaker_id;
+      spk = spk != null && String(spk) !== "" ? String(spk) : deepFindSpeaker(ev);
+      if (item) { this.lastSrc = item; if (spk != null) this._put(this.spkByItem, item, spk); }
+      if (spk != null) this.lastSpk = spk;
+      return [{ type: "speaker", id: item, speaker: spk }];
+    }
+    if (t === "conversation.item.created") {
+      const it = ev.item || {};
+      if (it.id && it.role === "assistant" && ev.previous_item_id)
+        this._put(this.srcOf, it.id, ev.previous_item_id);
+      else if (it.id && it.role === "user") this.lastSrc = it.id;
+      return [];
+    }
+    if (t.startsWith("conversation.item.input_audio_transcription")) {
+      if (t.endsWith(".failed")) return [];
+      const id = ev.item_id || this.lastSrc;
+      const base = { type: "seg", id, speaker: this._spk(id, ev) };
+      const delta = ev.delta || "", text = ev.transcript || ev.text || "";
+      if (t.endsWith(".completed")) return [{ ...base, src: text, src_final: true }];
+      if (delta && !text) return [{ ...base, src_delta: delta }];
+      return [{ ...base, src: text + (ev.stash || "") }];
+    }
+    if (t.startsWith("response.text.") || t.startsWith("response.audio_transcript.")) {
+      const id = this._srcForDst(ev.item_id);
+      const base = { type: "seg", id, speaker: this._spk(id, ev) };
+      if (t.endsWith(".delta")) return ev.delta ? [{ ...base, dst_delta: ev.delta }] : [];
+      const text = ev.text || ev.transcript || "";
+      if (t.endsWith(".done")) return [{ ...base, dst: text, dst_final: true }];
+      return [{ ...base, dst: text + (ev.stash || "") }];
+    }
+    if (t === "response.done") {
+      const out = ((ev.response || {}).output || []).map((it) => {
+        const id = this._srcForDst(it.id);
+        return { type: "turn_done", id, speaker: this._spk(id, ev) };
+      });
+      return out.length ? out
+        : [{ type: "turn_done", id: this.lastSrc, speaker: deepFindSpeaker(ev) }];
+    }
+    return [];
+  }
+}
+
+function sessionConfig(target, voice, wantAudio, stream, phrases, manual, silenceMs) {
   // mate 连续流用 speaker_detection；self 按住说话用 Manual(null)+commit；
   // manual=false 是兜底档（端点若拒 null 则退回自动断句）
   const auto = { type: "speaker_detection", threshold: 0.5,
-                 silence_duration_ms: 1000 };
+                 silence_duration_ms: silenceMs || 800 };
   const turn = (stream === "self" && manual !== false) ? null : auto;
   const translation = { language: target };
   if (phrases && Object.keys(phrases).length)
@@ -71,8 +145,10 @@ class DirectSession {
     this.voice = cfg.voice;
     this.wantAudio = !!cfg.play_audio;
     this.phrases = phrases;
+    this.silenceMs = +cfg.mate_silence_ms || 800;
     this.ws = null; this.ready = false; this._stop = false;
     this._seen = new Set();
+    this.norm = new EventNormalizer();
   }
 
   start() { this._stop = false; this._loop(); }
@@ -159,7 +235,7 @@ class DirectSession {
       ws.on("open", () => {
         ws.send(JSON.stringify(sessionConfig(
           this.target, tier.voice, tier.audio, this.stream,
-          tier.phrases, tier.manual)));
+          tier.phrases, tier.manual, this.silenceMs)));
       });
       ws.on("error", (err) => {
         if (!settled) {
@@ -204,11 +280,7 @@ class DirectSession {
   _handle(ev) {
     const t = ev.type || "";
     if (["input_audio_buffer.committed", "response.created",
-         "input_audio_buffer.speech_started",
          "input_audio_buffer.speech_stopped"].includes(t)) return;
-    if (t === "response.done") {
-      this._ev({ type: "turn_done", speaker: deepFindSpeaker(ev) }); return;
-    }
     if (t === "error" || ev.code) {
       this._ev({ type: "error", code: "upstream", msg: errText(ev) });
       return;
@@ -218,39 +290,13 @@ class DirectSession {
       if (pcm) this.emit("tts", { stream: this.stream, pcm });
       return;
     }
-    if (t.startsWith("conversation.item.input_audio_transcription")) {
-      const speaker = deepFindSpeaker(ev);
-      const text = ev.transcript || ev.text || "";
-      const stash = ev.stash || "", delta = ev.delta || "";
-      const final = t.endsWith(".completed");
-      if (delta && !text)
-        this._ev({ type: "seg", speaker, src_delta: delta, final: false });
-      else
-        this._ev({ type: "seg", speaker, src: text + (final ? "" : stash),
-                   src_final: final });
-      return;
-    }
-    if (t.startsWith("response.text.") ||
-        t.startsWith("response.audio_transcript.")) {
-      const speaker = deepFindSpeaker(ev);
-      if (t.endsWith(".delta")) {
-        this._ev({ type: "seg", speaker, dst_delta: ev.delta || "",
-                   final: false });
-        return;
-      }
-      const text = ev.text || ev.transcript || "", stash = ev.stash || "";
-      this._ev({ type: "seg", speaker,
-                 dst: text + (t.endsWith(".done") ? "" : stash),
-                 dst_final: t.endsWith(".done") });
-      return;
-    }
     if (t === "session.finished") {
       this._cleanFinish = true;
       this._ev({ type: "closed", reason: "finished" }); return;
     }
-    const spk = deepFindSpeaker(ev);
-    if (spk) this._ev({ type: "speaker", speaker: spk, event: t });
-    if (t && !this._seen.has(t)) {
+    const out = this.norm.feed(ev);
+    for (const m of out) this._ev(m);
+    if (!out.length && t && !this._seen.has(t)) {
       this._seen.add(t);
       console.log(`[${this.stream}] ev: ${t}`);
     }
@@ -267,16 +313,21 @@ class DirectSession {
 }
 
 /* 服务器中转模式 */
+/* 终态错误：透传给 UI 显示原因，但不再自动重连 */
+const TERMINAL = new Set(["unauthorized", "insufficient_balance", "banned", "kicked"]);
+
 class RelaySession {
-  constructor(cfg, stream, emit) {
+  // 与 DirectSession 同签名（phrases 在中转模式由服务端注入，这里忽略）
+  constructor(cfg, stream, _phrases, emit) {
     this.stream = stream; this.emit = emit;
-    const base = cfg.server_url
+    const base = String(cfg.server_url || "")
       .replace(/^https?/, m => m === "https" ? "wss" : "ws")
       .replace(/\/+$/, "");
     // token 走 Authorization 头，不进 URL（避免进代理/服务器日志）
-    this.url = `${base}/ws/translate?stream=${stream}` +
-               `&target=${stream === "mate" ? cfg.target_mate : cfg.target_self}` +
-               `&voice=${cfg.voice}&audio=${cfg.play_audio ? 1 : 0}`;
+    const q = new URLSearchParams({
+      stream, target: stream === "mate" ? cfg.target_mate : cfg.target_self,
+      voice: cfg.voice || "", audio: cfg.play_audio ? "1" : "0" });
+    this.url = `${base}/ws/translate?${q}`;
     this.token = cfg.token || "";
     this.ws = null; this.ready = false; this._stop = false;
   }
@@ -304,8 +355,7 @@ class RelaySession {
             } else if (ev.type === "closed") {
               // 服务端主动结束（可能紧跟终态 error）：不再把 closed 当"干净"跳过退避
               this.emit("rt-state", { stream: this.stream, state: "closed" });
-            } else if (ev.type === "error" &&
-                       (ev.code === "unauthorized" || ev.code === "insufficient_balance")) {
+            } else if (ev.type === "error" && TERMINAL.has(ev.code)) {
               // 终态错误：照常透传给 UI 显示原因，但连接结束后不再重连
               terminal = true;
               this.emit("rt-ev", { stream: this.stream, ev });
@@ -337,4 +387,4 @@ class RelaySession {
   _send(o) { if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(o)); }
 }
 
-module.exports = { DirectSession, RelaySession };
+module.exports = { DirectSession, RelaySession, EventNormalizer };

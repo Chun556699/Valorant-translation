@@ -2,7 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 /* renderer 允许监听的 IPC 通道白名单 */
 const _CHANNELS = [
-  'cfg', 'seg', 'status', 'ptt', 'mate_tick', 'mate-state',
+  'cfg', 'seg', 'seg-done', 'status', 'ptt', 'mate_tick', 'mate-state',
   'rt-state', 'rt-ev', 'tts', 'ovctl', 'tray',
   'hotkey-captured', 'hotkey-invalid', 'speaker',
 ];
@@ -10,6 +10,9 @@ const _CHANNELS = [
 contextBridge.exposeInMainWorld('api', {
   cfgGet: () => ipcRenderer.invoke('cfg:get'),
   cfgSet: (patch) => ipcRenderer.invoke('cfg:set', patch),
+  // 计费服务器 HTTP（主进程代发，自动带 token；路径白名单见 main.js）
+  srv: (path, method, body) => ipcRenderer.invoke('srv:request', { path, method, body }),
+  srvLogout: () => ipcRenderer.invoke('srv:logout'),
   winMin: () => ipcRenderer.send('win:min'),
   winClose: () => ipcRenderer.send('win:close'),
   winMax: () => ipcRenderer.send('win:max'),

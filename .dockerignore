@@ -1,0 +1,7 @@
+*
+!requirements-server.txt
+!server/*.py
+!server/game_terms.json
+!server/admin/**
+server/smoke_test.py
+server/admin_test.py

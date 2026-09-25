@@ -2,8 +2,11 @@
 
 下行（服务器 -> 客户端）归一化消息：
   {"type":"ready"}
-  {"type":"seg","seq":n,"speaker":"S1","src":"...","dst":"...",
-   "src_final":bool,"dst_final":bool}
+  {"type":"seg","id":"item_x","speaker":"0","src":"...","dst":"...",
+   "src_delta":"...","dst_delta":"...","src_final":bool,"dst_final":bool}
+     id = 本段原文识别 item_id（原文/译文靠它归到同一气泡，多人同时说话不串行）
+  {"type":"speaker","id":"item_x","speaker":"0"}   # 新一段语音开始
+  {"type":"turn_done","id":"item_x","speaker":"0"}
   {"type":"usage","used_seconds":x,"credit_seconds":y,"sub":bool}
   {"type":"error","code":"...","msg":"..."}
   {"type":"closed","reason":"..."}
@@ -18,12 +21,12 @@ import base64
 import json
 import logging
 import time
+from collections import OrderedDict
 
 import websockets
 from starlette.websockets import WebSocketState
 
 import config
-import valorant_terms
 
 log = logging.getLogger("relay")
 
@@ -31,6 +34,14 @@ FLUSH_EVERY_SECONDS = 15      # 每累计这么多可计费时长就扣一次点
 MAX_AUDIO_B64_LEN = 350_000   # 单条音频 base64 上限（约 256KB 原始 PCM）
 MAX_AUDIO_RATE = 4.0          # 允许的最大推流倍速（相对实时）
 RATE_WINDOW_SECONDS = 10.0    # 超速判定窗口：持续超过该时长才断开
+HANDSHAKE_TIMEOUT = 10.0      # 等待 session.updated 的超时
+MAX_PHRASES = 1000            # 官方建议热词不超过 1000 条
+
+# 在线会话登记表（管理后台"实时会话"用）：id(session) -> session
+ACTIVE: dict[int, "RelaySession"] = {}
+
+# 热词提供者：app 启动时注入（读库带缓存），缺省为空表
+terms_provider = lambda target: {}  # noqa: E731
 
 
 def _deep_find_speaker(obj) -> str | None:
@@ -53,20 +64,20 @@ def _deep_find_speaker(obj) -> str | None:
     return None
 
 
-def _session_config(stream: str, target: str, voice: str,
-                    want_audio: bool) -> dict:
+def _session_config(stream: str, target: str, voice: str, want_audio: bool,
+                    phrases: dict | None = None, manual: bool = True) -> dict:
     """mate 流 speaker_detection（连续多人语音自动断句+分说话人）；
     self 流 manual——按住说话松开 commit 整句翻译，防止中途断句。
-    corpus.phrases 注入 Valorant 术语热词。"""
-    turn = (None if stream == "self" else {
+    manual=False 为兜底档（端点拒绝 null 时退回自动断句）。
+    corpus.phrases 注入游戏术语热词。"""
+    turn = (None if stream == "self" and manual else {
         "type": "speaker_detection",
         "threshold": 0.5,
-        "silence_duration_ms": 1000,
+        "silence_duration_ms": config.MATE_SILENCE_MS,
     })
     translation = {"language": target}
-    phrases = valorant_terms.for_target(target)
     if phrases:
-        translation["corpus"] = {"phrases": phrases}
+        translation["corpus"] = {"phrases": dict(list(phrases.items())[:MAX_PHRASES])}
     session = {
         "output_modalities": ["text", "audio"] if want_audio else ["text"],
         "audio": {
@@ -82,6 +93,103 @@ def _session_config(stream: str, target: str, voice: str,
     }
     session.update(config.DASH_SESSION_EXTRA)
     return {"type": "session.update", "session": session}
+
+
+class EventNormalizer:
+    """上游事件 -> 归一化 seg，按 item 关联原文/译文/说话人。
+
+    qwen3.8 协议：speaker_id 只出现在 input_audio_buffer.speech_started（带 item_id）；
+    原文识别事件带同一 item_id；译文 item 通过 conversation.item.created 的
+    previous_item_id 指回原文 item。不做关联时多人同时说话会串进同一个气泡。"""
+    MAX_ITEMS = 256
+    SRC_PREFIX = "conversation.item.input_audio_transcription"
+    DST_PREFIXES = ("response.text.", "response.audio_transcript.")
+
+    def __init__(self):
+        self.spk_by_item: OrderedDict[str, str] = OrderedDict()
+        self.src_of: OrderedDict[str, str] = OrderedDict()   # 译文 item -> 原文 item
+        self.last_src: str | None = None
+        self.last_spk: str | None = None
+
+    def _put(self, d: OrderedDict, k, v):
+        d[k] = v
+        d.move_to_end(k)
+        while len(d) > self.MAX_ITEMS:
+            d.popitem(last=False)
+
+    def _spk(self, item: str | None, ev: dict) -> str | None:
+        spk = self.spk_by_item.get(item) if item else None
+        if spk is None:
+            spk = _deep_find_speaker(ev)
+            if spk is not None and item:
+                self._put(self.spk_by_item, item, spk)
+        if spk is None and item and item == self.last_src:
+            spk = self.last_spk
+        return spk
+
+    def _src_for_dst(self, tid: str | None) -> str | None:
+        if not tid:
+            return self.last_src
+        sid = self.src_of.get(tid)
+        if sid is None:
+            # 未收到 item.created 关联：按"最近一段语音"兜底，并记住避免后续漂移
+            sid = self.last_src or tid
+            self._put(self.src_of, tid, sid)
+        return sid
+
+    def feed(self, ev: dict) -> list[dict]:
+        et = ev.get("type", "")
+        if et == "input_audio_buffer.speech_started":
+            item = ev.get("item_id")
+            spk = ev.get("speaker_id")
+            spk = str(spk) if spk is not None and str(spk) != "" else _deep_find_speaker(ev)
+            if item:
+                self.last_src = item
+                if spk is not None:
+                    self._put(self.spk_by_item, item, spk)
+            if spk is not None:
+                self.last_spk = spk
+            return [{"type": "speaker", "id": item, "speaker": spk}]
+        if et == "conversation.item.created":
+            item = ev.get("item") or {}
+            iid, prev = item.get("id"), ev.get("previous_item_id")
+            if iid and item.get("role") == "assistant" and prev:
+                self._put(self.src_of, iid, prev)
+            elif iid and item.get("role") == "user":
+                self.last_src = iid     # Manual 模式 commit 产生的原文 item
+            return []
+
+        if et.startswith(self.SRC_PREFIX):
+            if et.endswith(".failed"):
+                return []
+            sid = ev.get("item_id") or self.last_src
+            base = {"type": "seg", "id": sid, "speaker": self._spk(sid, ev)}
+            delta, text = ev.get("delta") or "", ev.get("transcript") or ev.get("text") or ""
+            if et.endswith(".completed"):
+                return [{**base, "src": text, "src_final": True}]
+            if delta and not text:
+                return [{**base, "src_delta": delta}]
+            return [{**base, "src": text + (ev.get("stash") or "")}]
+
+        if et.startswith(self.DST_PREFIXES):
+            sid = self._src_for_dst(ev.get("item_id"))
+            base = {"type": "seg", "id": sid, "speaker": self._spk(sid, ev)}
+            if et.endswith(".delta"):
+                d = ev.get("delta") or ""
+                return [{**base, "dst_delta": d}] if d else []
+            text = ev.get("text") or ev.get("transcript") or ""
+            if et.endswith(".done"):
+                return [{**base, "dst": text, "dst_final": True}]
+            return [{**base, "dst": text + (ev.get("stash") or "")}]
+
+        if et == "response.done":
+            out = []
+            for it in ((ev.get("response") or {}).get("output") or []):
+                sid = self._src_for_dst(it.get("id"))
+                out.append({"type": "turn_done", "id": sid, "speaker": self._spk(sid, ev)})
+            return out or [{"type": "turn_done", "id": self.last_src,
+                            "speaker": _deep_find_speaker(ev)}]
+        return []
 
 
 class RelaySession:
@@ -115,6 +223,10 @@ class RelaySession:
         self._audio_chunks = 0
         self._closed = False
         self._flushed = False
+        self.norm = EventNormalizer()
+        self.started_at = int(time.time())
+        self.client_ip = ""
+        self.degraded: list[str] = []   # 被上游拒绝而降级掉的能力
 
     # ---------- 下行辅助 ----------
     async def _send(self, obj: dict):
@@ -226,18 +338,64 @@ class RelaySession:
             await self.close()
 
     # ---------- 上游 ----------
-    async def _connect_upstream(self):
+    async def _open_upstream(self, tier: dict) -> str | None:
+        """建连 + session.update，等到 session.updated 返回 None；被拒返回错误文本。"""
         url = f"{config.DASHSCOPE_WS_URL}?model={config.TRANSLATE_MODEL}"
-        self.user = self.db.user_by_id(self.user_id) or self.user
-        self.upstream = await websockets.connect(
+        ws = await websockets.connect(
             url,
             additional_headers={"Authorization": f"Bearer {config.DASHSCOPE_API_KEY}"},
             ping_interval=20,
             max_size=8 * 1024 * 1024,
         )
-        await self.upstream.send(json.dumps(
-            _session_config(self.stream, self.target, self.voice,
-                            self.want_audio)))
+        await ws.send(json.dumps(_session_config(
+            self.stream, self.target, tier["voice"], tier["audio"],
+            tier["phrases"], tier["manual"])))
+        deadline = time.monotonic() + HANDSHAKE_TIMEOUT
+        try:
+            while True:
+                raw = await asyncio.wait_for(ws.recv(), max(0.1, deadline - time.monotonic()))
+                try:
+                    ev = json.loads(raw)
+                except ValueError:
+                    continue
+                if ev.get("type") == "session.updated":
+                    self.upstream = ws
+                    return None
+                if ev.get("type") == "error" or ev.get("code"):
+                    await ws.close()
+                    return json.dumps(ev, ensure_ascii=False)[:500]
+        except BaseException:
+            await ws.close()
+            raise
+
+    async def _connect_upstream(self):
+        """降级链：完整配置 -> 去热词 -> 去音色 -> 纯文本 -> 自动断句（哪个被拒降哪个）。"""
+        tier = {"phrases": terms_provider(self.target), "voice": self.voice,
+                "audio": self.want_audio, "manual": True}
+        for _ in range(5):
+            err = await self._open_upstream(tier)
+            if err is None:
+                return
+            low = err.lower()
+            if tier["phrases"] and ("corpus" in low or "phrases" in low):
+                tier["phrases"] = None
+                self.degraded.append("phrases")
+            elif (tier["voice"] or tier["audio"]) and any(
+                    k in low for k in ("voice", "output", "modalit")):
+                if tier["voice"]:
+                    tier["voice"] = ""
+                    self.degraded.append("voice")
+                else:
+                    tier["audio"] = False
+                    self.want_audio = False
+                    self.degraded.append("audio")
+            elif tier["manual"] and self.stream == "self" and "turn_detection" in low:
+                tier["manual"] = False
+                self.degraded.append("manual")
+            else:
+                raise RuntimeError(err)
+            log.warning("上游拒绝配置，降级 %s：%s", self.degraded[-1], err[:200])
+        raise RuntimeError("上游配置协商失败")
 
     async def _up_send(self, obj: dict):
         if self.upstream:
@@ -257,11 +415,13 @@ class RelaySession:
             await self._err("upstream_connect_failed", f"翻译服务连接失败: {e}")
             return
 
+        ACTIVE[id(self)] = self
+        self.db.touch_user(self.user_id)
         await self._send({"type": "ready", "stream": self.stream,
                           "credit_seconds": int(self.credit_seconds),
                           "trial_seconds": int(self.trial_seconds),
                           "money_cents": int(self.money_cents),
-                          "sub": self.sub})
+                          "sub": self.sub, "degraded": self.degraded})
         tasks = [asyncio.create_task(t) for t in (
             self._pump_client_to_up(),
             self._pump_up_to_client(),
@@ -345,9 +505,9 @@ class RelaySession:
 
         if et == "input_audio_buffer.speech_started":
             self._saw_speech_event = True
-            self._speech_t0 = time.monotonic()
-            return
-        if et == "input_audio_buffer.speech_stopped":
+            if self._speech_t0 is None:   # 多人重叠说话：从最早开口计起，不重置
+                self._speech_t0 = time.monotonic()
+        elif et == "input_audio_buffer.speech_stopped":
             if self._speech_t0 is not None:
                 self._acc(time.monotonic() - self._speech_t0)
                 self._speech_t0 = None
@@ -355,30 +515,9 @@ class RelaySession:
         if et in ("session.created", "session.updated", "input_audio_buffer.committed",
                   "response.created"):
             return
-        if et == "response.done":
-            await self._send({"type": "turn_done",
-                              "speaker": _deep_find_speaker(ev)})
-            return
 
         if et == "error" or ev.get("code"):
             await self._err("upstream_error", json.dumps(ev, ensure_ascii=False)[:500])
-            return
-
-        # --- 原文识别 ---
-        if et.startswith("conversation.item.input_audio_transcription"):
-            speaker = _deep_find_speaker(ev)
-            text = ev.get("transcript") or ev.get("text") or ""
-            stash = ev.get("stash", "") or ""
-            delta = ev.get("delta", "") or ""
-            final = et.endswith(".completed")
-            if delta and not text:
-                # delta 事件：客户端自行累加
-                await self._send({"type": "seg", "speaker": speaker,
-                                  "src_delta": delta, "final": False})
-                return
-            await self._send({"type": "seg", "speaker": speaker,
-                              "src": text + ("" if final else stash),
-                              "src_final": final})
             return
 
         # --- 译文音频（TTS 播报）---
@@ -394,30 +533,14 @@ class RelaySession:
                     log.info("收到首个 TTS 音频帧(%s)", et)
             return
 
-        # --- 译文 ---
-        if et.startswith("response.text.") or et.startswith("response.audio_transcript."):
-            speaker = _deep_find_speaker(ev)
-            if et.endswith(".delta"):
-                await self._send({"type": "seg", "speaker": speaker,
-                                  "dst_delta": ev.get("delta", ""), "final": False})
-                return
-            text = ev.get("text") or ev.get("transcript") or ""
-            stash = ev.get("stash", "") or ""
-            final = et.endswith(".done")
-            await self._send({"type": "seg", "speaker": speaker,
-                              "dst": text + ("" if final else stash),
-                              "dst_final": final})
-            return
-
         if et == "session.finished":
             await self._send({"type": "closed", "reason": "finished"})
             self._closed = True
             return
 
-        # 其它事件（含 speaker_detection 专属事件）：尝试提取 speaker 透传，便于前端标记
-        spk = _deep_find_speaker(ev)
-        if spk:
-            await self._send({"type": "speaker", "speaker": spk, "event": et})
+        # 原文 / 译文 / 说话人 / 轮次结束：按 item 关联后下发
+        for msg in self.norm.feed(ev):
+            await self._send(msg)
 
     async def _meter_loop(self):
         while not self._closed:
@@ -427,6 +550,9 @@ class RelaySession:
             else:
                 # 无结算时也刷新权益：订阅中途过期/余额被扣光可在一个周期内生效
                 self._refresh_entitlement()
+                if self.user.get("banned"):
+                    await self.kick("banned", "账号已被封禁")
+                    break
                 if not self._has_entitlement():
                     await self._err("insufficient_balance", "额度已用完，请充值")
                     await self.close()
@@ -444,7 +570,7 @@ class RelaySession:
                 spk = mock_speakers[i % 2] if self.stream == "mate" else "ME"
                 i += 1
                 self.seq += 1
-                await self._send({"type": "seg", "speaker": spk,
+                await self._send({"type": "seg", "id": f"mock_{self.seq}", "speaker": spk,
                                   "src": f"[mock src {i}]", "src_final": True,
                                   "dst": f"[mock dst {i}]", "dst_final": True})
                 if self.want_audio:
@@ -455,8 +581,30 @@ class RelaySession:
         # 保证循环退出
         return
 
+    def info(self) -> dict:
+        """管理后台实时会话展示用。"""
+        return {"sid": id(self), "user_id": self.user_id,
+                "username": self.user.get("username") or "游客",
+                "stream": self.stream, "target": self.target,
+                "audio": self.want_audio, "started_at": self.started_at,
+                "billed_seconds": self.billed_total, "ip": self.client_ip,
+                "degraded": self.degraded}
+
+    async def kick(self, code: str = "kicked", msg: str = "会话已被管理员断开"):
+        await self._err(code, msg)
+        await self._send({"type": "closed", "reason": code})
+        await self.close()
+
+        async def _close_ws():   # 关闭握手可能等慢客户端，放后台不阻塞调用方
+            try:
+                await self.ws.close()
+            except Exception:
+                pass
+        asyncio.create_task(_close_ws())
+
     async def close(self):
         self._closed = True
+        ACTIVE.pop(id(self), None)
         # 未闭合的语音窗口一并结算
         if self._speech_t0 is not None:
             self._acc(time.monotonic() - self._speech_t0)
