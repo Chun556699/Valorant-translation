@@ -303,12 +303,31 @@ class DirectSession {
   }
 
   sendAudio(b64) {
-    if (this.ready && this.ws && this.ws.readyState === 1)
+    if (this.ready && this.ws && this.ws.readyState === 1) {
       this.ws.send(JSON.stringify(
         { type: "input_audio_buffer.append", audio: b64 }));
+      this._appended = (this._appended || 0) + 1;
+    } else if ((this._dropped = (this._dropped || 0) + 1) === 1) {
+      // 按住说话期间通道未就绪：帧被丢，commit 会报"缓冲为空"——先报出来
+      this._ev({ type: "error", code: "dropped",
+                 msg: "通道未就绪，音频未送达（检查连接状态）" });
+    }
   }
-  commit() { this._send({ type: "input_audio_buffer.commit" }); }
-  clear()  { this._send({ type: "input_audio_buffer.clear" }); }
+  commit() {
+    if (!this.ws || this.ws.readyState !== 1) return;
+    if (!this._appended) {
+      // 本回合没送达任何音频：发 commit 只会换来上游"缓冲为空"报错
+      this._ev({ type: "error", code: "empty",
+                 msg: "未采集到音频：麦克风无声或按得太快" });
+      return;
+    }
+    this._appended = 0; this._dropped = 0;
+    this._send({ type: "input_audio_buffer.commit" });
+  }
+  clear()  {
+    this._appended = 0; this._dropped = 0;
+    this._send({ type: "input_audio_buffer.clear" });
+  }
   _send(o) { if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(o)); }
 }
 
@@ -379,11 +398,28 @@ class RelaySession {
     }
   }
   sendAudio(b64) {
-    if (this.ready && this.ws && this.ws.readyState === 1)
+    if (this.ready && this.ws && this.ws.readyState === 1) {
       this.ws.send(JSON.stringify({ type: "audio", pcm: b64 }));
+      this._appended = (this._appended || 0) + 1;
+    } else if ((this._dropped = (this._dropped || 0) + 1) === 1) {
+      this._ev({ type: "error", code: "dropped",
+                 msg: "通道未就绪，音频未送达（检查连接状态）" });
+    }
   }
-  commit() { this._send({ type: "commit" }); }
-  clear()  { this._send({ type: "clear" }); }
+  commit() {
+    if (!this.ws || this.ws.readyState !== 1) return;
+    if (!this._appended) {
+      this._ev({ type: "error", code: "empty",
+                 msg: "未采集到音频：麦克风无声或按得太快" });
+      return;
+    }
+    this._appended = 0; this._dropped = 0;
+    this._send({ type: "commit" });
+  }
+  clear()  {
+    this._appended = 0; this._dropped = 0;
+    this._send({ type: "clear" });
+  }
   _send(o) { if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(o)); }
 }
 

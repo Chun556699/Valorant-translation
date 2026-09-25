@@ -40,14 +40,29 @@ class Capture {
   }
   async startMic(deviceId) {
     this.stop();
-    const stream = await navigator.mediaDevices.getUserMedia({
+    const constraints = (dev) => ({
       audio: {
-        deviceId: deviceId ? { exact: deviceId } : undefined,
+        deviceId: dev ? { exact: dev } : undefined,
         channelCount: 1, echoCancellation: false,
         noiseSuppression: false, autoGainControl: false,
       },
     });
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(constraints(deviceId));
+    } catch (e) {
+      if (!deviceId) throw e;
+      // 配置里存的设备已失效（换设备/旧配置），回退默认麦克风
+      stream = await navigator.mediaDevices.getUserMedia(constraints(undefined));
+    }
     await this._attach(stream);
+    // AudioContext 无手势创建可能被挂起，worklet 不跑就不产出音频
+    if (this.ctx.state === 'suspended') {
+      const resume = () => { try { this.ctx && this.ctx.resume(); } catch {} };
+      resume();
+      ['pointerdown', 'keydown'].forEach(ev =>
+        document.addEventListener(ev, resume, { passive: true }));
+    }
   }
   async startLoopback() {
     this.stop();
