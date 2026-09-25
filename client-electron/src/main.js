@@ -311,11 +311,26 @@ ipcMain.on('overlay:through', (_e, on) => {
   ovThrough = !!on;
   if (overlayWin) overlayWin.setIgnoreMouseEvents(ovThrough, { forward: true });
 });
-/* 穿透模式下光标悬停顶栏：临时恢复可交互（可拖动/点按钮），离开后恢复穿透 */
+/* 穿透模式下光标碰到顶栏：整窗临时可交互（可拖动/缩放/点按钮）。
+ * 光标移出窗口范围后（150ms 轮询）恢复穿透；拖动/缩放中不检查。 */
+let ovArmTimer = null;
 ipcMain.on('ovhover', (_e, on) => {
-  if (!overlayWin || overlayWin.isDestroyed() || !ovThrough) return;
-  if (!on && ovDragTimer) return;   // 拖动中光标可能短暂出界，不切回穿透
-  overlayWin.setIgnoreMouseEvents(!on, { forward: true });
+  if (!on || !ovThrough || !overlayWin || overlayWin.isDestroyed()) return;
+  overlayWin.setIgnoreMouseEvents(false);
+  if (ovArmTimer) return;
+  ovArmTimer = setInterval(() => {
+    if (!overlayWin || overlayWin.isDestroyed()) { clearInterval(ovArmTimer); ovArmTimer = null; return; }
+    if (ovDragTimer || ovSizeTimer) return;
+    const c = screen.getCursorScreenPoint();
+    const b = overlayWin.getBounds();
+    const inside = c.x >= b.x && c.x < b.x + b.width &&
+                   c.y >= b.y && c.y < b.y + b.height;
+    if (!inside) {
+      clearInterval(ovArmTimer); ovArmTimer = null;
+      overlayWin.setIgnoreMouseEvents(true, { forward: true });
+      overlayWin.webContents.send('ovarm', false);
+    }
+  }, 150);
 });
 /* 悬浮窗拖拽：app-region 在透明窗上不可靠，改为主进程跟随光标。
  * renderer mousedown -> 记录偏移并启动跟随；mouseup/blur -> 停止 */
@@ -324,13 +339,7 @@ ipcMain.on('ovdrag', (_e, phase) => {
   if (phase !== 'start') {
     if (ovDragTimer) { clearInterval(ovDragTimer); ovDragTimer = null; }
     ovDragOff = null;
-    // 拖完若光标已不在窗内，穿透模式恢复忽略鼠标
-    if (ovThrough && overlayWin && !overlayWin.isDestroyed()) {
-      const c = screen.getCursorScreenPoint(), b = overlayWin.getBounds();
-      const inBar = c.x >= b.x && c.x < b.x + b.width && c.y >= b.y && c.y < b.y + 30;
-      if (!inBar) overlayWin.setIgnoreMouseEvents(true, { forward: true });
-    }
-    return;
+    return;   // 穿透恢复交给 ovhover 的边界轮询统一处理
   }
   if (!overlayWin || overlayWin.isDestroyed()) return;
   const p = screen.getCursorScreenPoint();

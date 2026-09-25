@@ -102,15 +102,13 @@ bar.addEventListener('mousedown', (e) => {
   if (cfg.overlay_locked || e.target.closest('.bbtn')) return;
   api.ovDrag('start');
 });
-// 穿透模式：悬停顶栏临时可交互（锁定时保持完全穿透）
+// 穿透模式：光标碰到顶栏 -> 整窗临时可交互；光标出窗由主进程轮询判定后恢复穿透
 bar.addEventListener('mouseenter', () => {
   if (cfg.click_through && !cfg.overlay_locked) {
     document.body.classList.add('barhover'); api.ovHover(true);
   }
 });
-bar.addEventListener('mouseleave', () => {
-  document.body.classList.remove('barhover'); api.ovHover(false);
-});
+api.on('ovarm', (on) => { if (!on) document.body.classList.remove('barhover'); });
 window.addEventListener('mouseup', () => { api.ovDrag('end'); api.ovSize('end'); });
 window.addEventListener('blur', () => { api.ovDrag('end'); api.ovSize('end'); });
 // 右下角手柄：拖拽缩放

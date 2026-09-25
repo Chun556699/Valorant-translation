@@ -3,7 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 /* renderer 允许监听的 IPC 通道白名单 */
 const _CHANNELS = [
   'cfg', 'seg', 'seg-done', 'status', 'ptt', 'mate_tick', 'mate-state',
-  'rt-state', 'rt-ev', 'tts', 'ovctl', 'tray',
+  'rt-state', 'rt-ev', 'tts', 'ovctl', 'ovarm', 'tray',
   'hotkey-captured', 'hotkey-invalid', 'speaker',
 ];
 
