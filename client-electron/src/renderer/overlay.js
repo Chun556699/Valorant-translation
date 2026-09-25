@@ -97,9 +97,19 @@ document.getElementById('btnLock').onclick = () => api.overlayCtl('lock');
 
 /* 拖拽：顶栏按下 -> 主进程跟随光标移动窗口；松开/失焦结束。
  * 锁定或穿透（bar 不可交互到不了这）时不触发。 */
-document.getElementById('bar').addEventListener('mousedown', (e) => {
-  if (cfg.overlay_locked || cfg.click_through || e.target.closest('.bbtn')) return;
+const bar = document.getElementById('bar');
+bar.addEventListener('mousedown', (e) => {
+  if (cfg.overlay_locked || e.target.closest('.bbtn')) return;
   api.ovDrag('start');
+});
+// 穿透模式：悬停顶栏临时可交互（锁定时保持完全穿透）
+bar.addEventListener('mouseenter', () => {
+  if (cfg.click_through && !cfg.overlay_locked) {
+    document.body.classList.add('barhover'); api.ovHover(true);
+  }
+});
+bar.addEventListener('mouseleave', () => {
+  document.body.classList.remove('barhover'); api.ovHover(false);
 });
 window.addEventListener('mouseup', () => api.ovDrag('end'));
 window.addEventListener('blur', () => api.ovDrag('end'));

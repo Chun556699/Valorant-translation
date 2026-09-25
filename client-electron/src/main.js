@@ -306,8 +306,16 @@ ipcMain.on('overlay:show', (_e, show) => {
   if (!overlayWin) createOverlay();
   else show ? overlayWin.show() : overlayWin.hide();
 });
+let ovThrough = false;
 ipcMain.on('overlay:through', (_e, on) => {
-  if (overlayWin) overlayWin.setIgnoreMouseEvents(on, { forward: true });
+  ovThrough = !!on;
+  if (overlayWin) overlayWin.setIgnoreMouseEvents(ovThrough, { forward: true });
+});
+/* 穿透模式下光标悬停顶栏：临时恢复可交互（可拖动/点按钮），离开后恢复穿透 */
+ipcMain.on('ovhover', (_e, on) => {
+  if (!overlayWin || overlayWin.isDestroyed() || !ovThrough) return;
+  if (!on && ovDragTimer) return;   // 拖动中光标可能短暂出界，不切回穿透
+  overlayWin.setIgnoreMouseEvents(!on, { forward: true });
 });
 /* 悬浮窗拖拽：app-region 在透明窗上不可靠，改为主进程跟随光标。
  * renderer mousedown -> 记录偏移并启动跟随；mouseup/blur -> 停止 */
@@ -316,6 +324,12 @@ ipcMain.on('ovdrag', (_e, phase) => {
   if (phase !== 'start') {
     if (ovDragTimer) { clearInterval(ovDragTimer); ovDragTimer = null; }
     ovDragOff = null;
+    // 拖完若光标已不在窗内，穿透模式恢复忽略鼠标
+    if (ovThrough && overlayWin && !overlayWin.isDestroyed()) {
+      const c = screen.getCursorScreenPoint(), b = overlayWin.getBounds();
+      const inBar = c.x >= b.x && c.x < b.x + b.width && c.y >= b.y && c.y < b.y + 30;
+      if (!inBar) overlayWin.setIgnoreMouseEvents(true, { forward: true });
+    }
     return;
   }
   if (!overlayWin || overlayWin.isDestroyed()) return;
