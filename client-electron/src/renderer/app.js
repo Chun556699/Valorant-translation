@@ -138,12 +138,14 @@ function refreshChips() {
 
 let _ovVisible = true;
 function pushTrayState() {
-  api.trayState({ running: state.running, through: cfg().click_through, ovVisible: _ovVisible });
+  api.trayState({ running: state.running, through: cfg().click_through,
+                  locked: cfg().overlay_locked, ovVisible: _ovVisible });
 }
 function onTrayAction(a) {
   if (a === 'toggle-run') setRunning(!state.running);
   else if (a === 'toggle-overlay') { _ovVisible = !_ovVisible; api.overlayShow(_ovVisible); pushTrayState(); }
   else if (a === 'toggle-through') setThrough(!cfg().click_through);
+  else if (a === 'toggle-lock') setLocked(!cfg().overlay_locked);
   else if (a === 'open-settings') switchPage('settings');
 }
 
@@ -366,11 +368,17 @@ function onOverlayCtl(a) {
     api.overlayThrough(cfg().click_through);
   } else if (a === 'mate') setMateOn(!state.mateOn);
   else if (a === 'pin') setThrough(!cfg().click_through);
+  else if (a === 'lock') setLocked(!cfg().overlay_locked);
   else if (a === 'hide') { _ovVisible = false; api.overlayShow(false); pushTrayState(); }
 }
 async function setThrough(on) {
   await cfgSet({ click_through: on });
   api.overlayThrough(on); $('sThrough').checked = on; pushTrayState(); pushOverlayCfg();
+}
+async function setLocked(on) {
+  await cfgSet({ overlay_locked: on });
+  const el = $('sLock'); if (el) el.checked = on;
+  pushOverlayCfg(); pushTrayState();
 }
 function pushOverlayCfg() {
   const c = cfg();
@@ -378,7 +386,8 @@ function pushOverlayCfg() {
     max_bubbles: c.max_bubbles, overlay_src_color: c.overlay_src_color,
     overlay_dst_color: c.overlay_dst_color, overlay_opacity: c.overlay_opacity,
     overlay_font_scale: c.overlay_font_scale, overlay_fade_sec: c.overlay_fade_sec,
-    overlay_show_src: c.overlay_show_src, click_through: c.click_through, ui_lang: c.ui_lang,
+    overlay_show_src: c.overlay_show_src, click_through: c.click_through,
+    overlay_locked: c.overlay_locked, ui_lang: c.ui_lang,
   });
 }
 function setStatus(s) { api.toOverlay('status', s); }
@@ -389,6 +398,8 @@ function initSubtitle() {
   $('btnOvShow').onclick = () => { _ovVisible = !_ovVisible; api.overlayShow(_ovVisible); pushTrayState(); };
   $('sThrough').checked = !!c.click_through;
   $('sThrough').onchange = () => setThrough($('sThrough').checked);
+  $('sLock').checked = !!c.overlay_locked;
+  $('sLock').onchange = () => setLocked($('sLock').checked);
   const slider = (id, valId, key, toCfg, fromCfg, fmt) => {
     $(id).value = fromCfg(c[key]);
     const show = () => { $(valId).textContent = fmt(+$(id).value); };

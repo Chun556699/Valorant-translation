@@ -174,6 +174,8 @@ function buildTrayMenu() {
       click: () => send('tray', 'toggle-overlay') },
     { label: '字幕穿透', type: 'checkbox', checked: trayState.through,
       click: () => send('tray', 'toggle-through') },
+    { label: '锁定字幕窗', type: 'checkbox', checked: trayState.locked,
+      click: () => send('tray', 'toggle-lock') },
     { type: 'separator' },
     { label: '设置',
       click: () => {

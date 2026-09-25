@@ -16,6 +16,8 @@ html, body { height: 100%; background: transparent; overflow: hidden; }
   opacity: 1; transition: opacity .25s; }
 body.through #bar { background: transparent; opacity: .7; }
 body.through .bbtn { display: none; }
+body.locked #bar { -webkit-app-region: no-drag; }
+body.locked #btnLock { color: #ff8090; }
 .logo { width: 14px; height: 14px; background: #ff4655; flex: none;
   clip-path: polygon(0 0, 100% 0, 100% 72%, 72% 100%, 0 100%); }
 .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; opacity: .25; background: #6b7a8c; transition: all .15s; }
@@ -54,6 +56,7 @@ body.folded #wrap { height: 30px; }
     <div class="dot" id="mateDot" title="Mate"></div>
     <div id="status">就绪</div>
     <button class="bbtn" id="btnMate">队友</button>
+    <button class="bbtn" id="btnLock" title="锁定位置">🔓</button>
     <button class="bbtn" id="btnPin">穿透</button>
     <button class="bbtn" id="btnFold">—</button>
     <button class="bbtn" id="btnHide">✕</button>

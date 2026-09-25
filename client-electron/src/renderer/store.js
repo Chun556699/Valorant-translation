@@ -13,7 +13,7 @@ const DEFAULTS = {
   ui_lang: "",
   auto_copy: false, mate_filter: true,
   mate_silence_ms: 800,
-  overlay_opacity: 0.6, click_through: false, max_bubbles: 6,
+  overlay_opacity: 0.6, click_through: false, overlay_locked: false, max_bubbles: 6,
   overlay_font_scale: 1, overlay_fade_sec: 20, overlay_show_src: true,
   mic_device: "", loopback_device: "", output_device: "",
   overlay_src_color: "#b8c2cc", overlay_dst_color: "#ffffff",

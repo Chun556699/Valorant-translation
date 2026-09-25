@@ -77,6 +77,8 @@ const _MAP = {
   "音色": "Voice", "账号设置": "Account", "实时字幕": "Live captions", "清屏": "Clear",
   "开始翻译后，队友和你的语音译文会实时显示在这里": "Translations of your teammates and you will appear here once started",
   "悬浮窗": "Overlay", "鼠标穿透": "Click-through", "游戏中点击直接穿过字幕": "Clicks pass through the overlay in game",
+  "锁定位置": "Lock position", "锁定后悬浮窗不可拖动": "Overlay cannot be dragged while locked",
+  "已锁定，点击解锁": "Locked — click to unlock", "点击锁定位置": "Click to lock position",
   "背景不透明度": "Background opacity", "字号": "Font size", "自动淡出": "Auto fade",
   "显示原文": "Show original", "译文下方显示对方原话": "Show the original speech under the translation",
   "颜色": "Colors", "原文": "Original", "译文": "Translation", "不淡出": "Never",

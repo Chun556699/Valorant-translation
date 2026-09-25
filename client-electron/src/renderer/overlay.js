@@ -9,7 +9,7 @@ const root = document.documentElement;
 const bubbles = new Map();   // key -> {el, srcEl, dstEl, timer}
 let cfg = { max_bubbles: 6, overlay_src_color: '#b8c2cc', overlay_dst_color: '#ffffff',
             overlay_opacity: .6, overlay_font_scale: 1, overlay_fade_sec: 20,
-            overlay_show_src: true, click_through: false, ui_lang: 'zh' };
+            overlay_show_src: true, click_through: false, overlay_locked: false, ui_lang: 'zh' };
 const EN = { '队友': 'Mate', '穿透': 'Pin', '就绪': 'Ready' };
 const t = (s) => (cfg.ui_lang === 'en' ? EN[s] || s : s);
 
@@ -34,6 +34,10 @@ function applyStyle() {
   root.style.setProperty('--fs', String(cfg.overlay_font_scale || 1));
   document.body.classList.toggle('nosrc', cfg.overlay_show_src === false);
   document.body.classList.toggle('through', !!cfg.click_through);
+  document.body.classList.toggle('locked', !!cfg.overlay_locked);
+  const lock = document.getElementById('btnLock');
+  lock.textContent = cfg.overlay_locked ? '🔒' : '🔓';
+  lock.title = cfg.overlay_locked ? t('已锁定，点击解锁') : t('点击锁定位置');
   document.getElementById('btnMate').textContent = t('队友');
   document.getElementById('btnPin').textContent = t('穿透');
   for (const b of bubbles.values()) {
@@ -89,5 +93,6 @@ function upsert(m) {
 /* 顶栏按钮 -> 主窗 */
 document.getElementById('btnMate').onclick = () => api.overlayCtl('mate');
 document.getElementById('btnPin').onclick = () => api.overlayCtl('pin');
+document.getElementById('btnLock').onclick = () => api.overlayCtl('lock');
 document.getElementById('btnHide').onclick = () => api.overlayCtl('hide');
 document.getElementById('btnFold').onclick = () => document.body.classList.toggle('folded');
