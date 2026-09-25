@@ -344,6 +344,23 @@ ipcMain.on('ovdrag', (_e, phase) => {
                            Math.round(c.y - ovDragOff.y));
   }, 16);
 });
+/* 右下角拖拽缩放：跟随光标算窗口尺寸 */
+let ovSizeTimer = null;
+ipcMain.on('ovsize', (_e, phase) => {
+  if (phase !== 'start') {
+    if (ovSizeTimer) { clearInterval(ovSizeTimer); ovSizeTimer = null; }
+    return;
+  }
+  if (!overlayWin || overlayWin.isDestroyed()) return;
+  if (ovSizeTimer) clearInterval(ovSizeTimer);
+  ovSizeTimer = setInterval(() => {
+    if (!overlayWin || overlayWin.isDestroyed()) return;
+    const c = screen.getCursorScreenPoint();
+    const [wx, wy] = overlayWin.getPosition();
+    overlayWin.setSize(Math.max(220, Math.round(c.x - wx + 10)),
+                       Math.max(60, Math.round(c.y - wy + 10)));
+  }, 16);
+});
 /* 热键录入：Esc 取消 / 10s 超时自动取消，避免卡死导致 PTT 失效 */
 let hkRecordTimer = null;
 function finishHotkeyRecord(spec) {

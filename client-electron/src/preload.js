@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('api', {
   toOverlay: (ch, payload) => ipcRenderer.send('ov', ch, payload),
   overlayCtl: (action) => ipcRenderer.send('ovctl', action),
   ovDrag: (phase) => ipcRenderer.send('ovdrag', phase),
+  ovSize: (phase) => ipcRenderer.send('ovsize', phase),
   ovHover: (on) => ipcRenderer.send('ovhover', on),
   clip: (text) => ipcRenderer.send('clip:write', text),
   relaunch: () => ipcRenderer.send('app:relaunch'),

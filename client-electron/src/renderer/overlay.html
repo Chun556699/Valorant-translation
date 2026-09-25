@@ -8,7 +8,7 @@
     font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; }
 html, body { height: 100%; background: transparent; overflow: hidden; }
 :root { --fs: 1; --bgA: .6; }
-#wrap { display: flex; flex-direction: column; height: 100vh; border-radius: 12px; overflow: hidden;
+#wrap { position: relative; display: flex; flex-direction: column; height: 100vh; border-radius: 12px; overflow: hidden;
   background: rgba(10, 14, 20, var(--bgA)); border: 1px solid rgba(255,255,255,calc(var(--bgA) * .12));
   transition: background .2s; }
 #bar { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 6px 0 10px; flex: none;
@@ -47,6 +47,12 @@ body.locked #btnLock { color: #ff8090; }
   text-shadow: 0 1px 2px rgba(0,0,0,.9); }
 .b.live .dst::after { content: "▍"; color: #ff4655; margin-left: 2px; animation: pulse .6s infinite alternate; }
 body.nosrc .src { display: none; }
+#grip { position: absolute; right: 0; bottom: 0; width: 22px; height: 22px;
+  cursor: nwse-resize; opacity: .35; transition: opacity .15s;
+  background: repeating-linear-gradient(-45deg, transparent 0 4px, rgba(255,255,255,.5) 4px 5px);
+  clip-path: polygon(100% 0, 100% 100%, 0 100%); }
+#grip:hover { opacity: .8; }
+body.locked #grip, body.through #grip, body.folded #grip { display: none; }
 body.folded #list { display: none; }
 body.folded #wrap { height: 30px; }
 </style></head>
@@ -64,6 +70,7 @@ body.folded #wrap { height: 30px; }
     <button class="bbtn" id="btnHide">✕</button>
   </div>
   <div id="list"></div>
+  <div id="grip" title="拖拽调整大小"></div>
 </div>
 <script src="overlay.js"></script>
 </body>

@@ -111,7 +111,13 @@ bar.addEventListener('mouseenter', () => {
 bar.addEventListener('mouseleave', () => {
   document.body.classList.remove('barhover'); api.ovHover(false);
 });
-window.addEventListener('mouseup', () => api.ovDrag('end'));
-window.addEventListener('blur', () => api.ovDrag('end'));
+window.addEventListener('mouseup', () => { api.ovDrag('end'); api.ovSize('end'); });
+window.addEventListener('blur', () => { api.ovDrag('end'); api.ovSize('end'); });
+// 右下角手柄：拖拽缩放
+document.getElementById('grip').addEventListener('mousedown', (e) => {
+  if (cfg.overlay_locked || cfg.click_through) return;
+  e.preventDefault();
+  api.ovSize('start');
+});
 document.getElementById('btnHide').onclick = () => api.overlayCtl('hide');
 document.getElementById('btnFold').onclick = () => document.body.classList.toggle('folded');
