@@ -3,7 +3,7 @@
  * 音频采集/翻译全在 renderer 的 Web API + WebSocket 里跑。
  */
 const { app, BrowserWindow, Tray, Menu, ipcMain, screen,
-        session, desktopCapturer, dialog } = require('electron');
+        session, desktopCapturer, dialog, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -365,6 +365,10 @@ ipcMain.on('hotkey:record', () => {
 ipcMain.on('ov', (_e, ch, payload) => sendOverlay(ch, payload));
 ipcMain.on('ovctl', (_e, action) => send('ovctl', action));
 ipcMain.on('app:relaunch', () => { app.relaunch(); app.exit(0); });
+/* 剪贴板写必须走主进程：窗口失焦/最小化时 navigator.clipboard 会静默失败 */
+ipcMain.on('clip:write', (_e, text) => {
+  try { clipboard.writeText(String(text || '')); } catch {}
+});
 
 /* ---------- 翻译会话（WS 带 Authorization 头，须跑在主进程） ---------- */
 const { DirectSession, RelaySession } = require('./rt');

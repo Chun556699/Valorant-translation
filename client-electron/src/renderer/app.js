@@ -277,7 +277,7 @@ function finishSeg(seg) {
   api.toOverlay('seg-done', { key: seg.id });
   const text = seg.dst.trim();
   if (!text) return;
-  if (seg.stream === 'self' || cfg().auto_copy) navigator.clipboard.writeText(text).catch(() => {});
+  if (seg.stream === 'self' || cfg().auto_copy) api.clip(text);
   if (seg.stream === 'self') setStatus(tr('已复制：') + text.slice(0, 40));
   recordHistory(seg);
 }
@@ -453,7 +453,7 @@ function initHistory() {
   $('histList').addEventListener('click', (e) => {
     const b = e.target.closest('[data-copy]'); if (!b) return;
     const list = JSON.parse(localStorage.getItem('hist') || '[]');
-    const h = list[+b.dataset.copy]; if (h) { navigator.clipboard.writeText(h.dst); toast(tr('已复制')); }
+    const h = list[+b.dataset.copy]; if (h) { api.clip(h.dst); toast(tr('已复制')); }
   });
 }
 function renderHistory() {
