@@ -10,36 +10,47 @@ class Capture {
     this.onChunk = null; this.onLevel = null; this.onEnded = null;
     this.running = false;
     this._filterOn = false;
+    this._gen = 0;   // 启动代际号：stop()/新一轮 start 递增，作废在途的异步启动
   }
   setFilter(on) {
     this._filterOn = on;
     if (this.node) this.node.port.postMessage({ type: 'filter', on });
   }
-  async _attach(mediaStream) {
-    this.stream = mediaStream;
+  /* 返回 false = 代际已落后（await 期间被 stop()/新一轮 start 取代），已就地拆除 */
+  async _attach(mediaStream, gen) {
     // 设备拔出/轨被系统结束：通知上层，避免"翻译中"假状态
     mediaStream.getTracks().forEach(t => {
       t.onended = () => {
         if (this.running) { this.running = false; this.onEnded && this.onEnded(); }
       };
     });
-    this.ctx = new AudioContext();
-    await this.ctx.audioWorklet.addModule('../worklets/pcm16.js');
-    const src = this.ctx.createMediaStreamSource(mediaStream);
-    this.node = new AudioWorkletNode(this.ctx, 'pcm16');
-    this.node.port.postMessage({ type: 'filter', on: this._filterOn });
-    this.node.port.onmessage = (e) => {
+    const ctx = new AudioContext();
+    await ctx.audioWorklet.addModule('../worklets/pcm16.js');
+    if (gen !== this._gen) {
+      // 已作废：就地拆除这路流和新开的 ctx，不接管实例字段（否则复活采集/泄漏 ctx）
+      try { mediaStream.getTracks().forEach(t => { t.onended = null; t.stop(); }); } catch {}
+      try { ctx.close(); } catch {}
+      return false;
+    }
+    const src = ctx.createMediaStreamSource(mediaStream);
+    const node = new AudioWorkletNode(ctx, 'pcm16');
+    node.port.postMessage({ type: 'filter', on: this._filterOn });
+    node.port.onmessage = (e) => {
       const { pcm, level } = e.data;
       if (this.onLevel) this.onLevel(level);
       if (this.onChunk) this.onChunk(pcm);
     };
-    const mute = this.ctx.createGain();   // 不回放，只挂进图让 worklet 跑
+    const mute = ctx.createGain();   // 不回放，只挂进图让 worklet 跑
     mute.gain.value = 0;
-    src.connect(this.node).connect(mute).connect(this.ctx.destination);
+    src.connect(node).connect(mute).connect(ctx.destination);
+    // 之后的代码不再有 await：此刻校验过代际即可安全接管实例字段并置 running
+    this.stream = mediaStream; this.ctx = ctx; this.node = node;
     this.running = true;
+    return true;
   }
   async startMic(deviceId) {
     this.stop();
+    const gen = ++this._gen;
     const constraints = (dev) => ({
       audio: {
         deviceId: dev ? { exact: dev } : undefined,
@@ -51,11 +62,16 @@ class Capture {
     try {
       stream = await navigator.mediaDevices.getUserMedia(constraints(deviceId));
     } catch (e) {
+      if (gen !== this._gen) return;   // 已被新一轮启动/停止取代：结果交给新启动
       if (!deviceId) throw e;
       // 配置里存的设备已失效（换设备/旧配置），回退默认麦克风
       stream = await navigator.mediaDevices.getUserMedia(constraints(undefined));
     }
-    await this._attach(stream);
+    if (gen !== this._gen) {           // await 期间被取代：丢弃这路流
+      stream.getTracks().forEach(t => t.stop());
+      return;
+    }
+    if (!await this._attach(stream, gen)) return;
     // AudioContext 无手势创建可能被挂起，worklet 不跑就不产出音频
     if (this.ctx.state === 'suspended') {
       const resume = () => { try { this.ctx && this.ctx.resume(); } catch {} };
@@ -66,14 +82,20 @@ class Capture {
   }
   async startLoopback() {
     this.stop();
+    const gen = ++this._gen;
     const stream = await navigator.mediaDevices.getDisplayMedia({
       video: true, audio: true,      // video 必需，拿到音频后丢弃视频轨
     });
+    if (gen !== this._gen) {         // 选屏期间被停止/重开：丢弃这路流，不复活采集
+      stream.getTracks().forEach(t => t.stop());
+      return;
+    }
     stream.getVideoTracks().forEach(t => t.stop());
     if (!stream.getAudioTracks().length) throw new Error('无系统音频轨');
-    await this._attach(stream);
+    if (!await this._attach(stream, gen)) return;
   }
   stop() {
+    this._gen++;   // 作废在途的异步启动（其 _attach 会自行拆除）
     this.running = false;
     try { this.node && this.node.disconnect(); } catch {}
     try { this.stream && this.stream.getTracks().forEach(t => t.stop()); } catch {}

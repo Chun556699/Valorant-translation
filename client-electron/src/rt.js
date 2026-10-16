@@ -146,7 +146,7 @@ class DirectSession {
     this.wantAudio = !!cfg.play_audio;
     this.phrases = phrases;
     this.silenceMs = +cfg.mate_silence_ms || 800;
-    this.ws = null; this.ready = false; this._stop = false;
+    this.ws = null; this.ready = false; this._stop = false; this.readyAt = 0;
     this._seen = new Set();
     this.norm = new EventNormalizer();
   }
@@ -154,7 +154,9 @@ class DirectSession {
   start() { this._stop = false; this._loop(); }
   stop() { this._stop = true; try { this.ws && this.ws.close(); } catch {} }
 
-  _state(s) { this.emit("rt-state", { stream: this.stream, state: s }); }
+  _state(s, reason) {
+    this.emit("rt-state", { stream: this.stream, state: s, ...(reason ? { reason } : {}) });
+  }
   _ev(e)    { this.emit("rt-ev", { stream: this.stream, ev: e }); }
 
   async _loop() {
@@ -180,8 +182,11 @@ class DirectSession {
           if (e === "WS_CLOSED") break;   // 正常断开
           const msg = String(e && e.message || e);
           if (e && e.fatal) {
-            // 致命鉴权错误（Key 无效 401/403）：换档重试也没有意义，直接终止
+            // 致命鉴权错误（Key 无效 401/403）：换档重试也没有意义，直接终止；
+            // 补发带原因的终态 closed，让 UI 复位「翻译中/连接中」假状态
+            // （'conn' 错误码不在 renderer 终态表，靠这里兜底复位）
             this._connErr(msg);
+            this._state("closed", msg);
             this._stop = true;
             break;
           }
@@ -206,6 +211,9 @@ class DirectSession {
       }
       this.ready = false;
       if (this._stop) break;
+      // 连接曾 ready 且存活 >= 30s 才重置退避（与 RelaySession 一致）：
+      // 健康运行过的长连接遇到网络抖动，不必再等满之前累计到的 15s
+      if (this.readyAt && Date.now() - this.readyAt >= 30000) backoff = 1;
       // 握手成功后的意外断线也按失败处理：先退避再重连，避免重连风暴；
       // 只有干净结束（session.finished / 主动 stop）才立即重连
       if (!ok || !cleanClose) {
@@ -227,6 +235,7 @@ class DirectSession {
     return new Promise((resolve, reject) => {
       let settled = false, handshakeDone = false;
       this._cleanFinish = false;
+      this.readyAt = 0;
       const ws = new WebSocket(this.url, {
         headers: { Authorization: `Bearer ${this.key}` },
         handshakeTimeout: 15000,
@@ -257,7 +266,8 @@ class DirectSession {
         let ev; try { ev = JSON.parse(raw.toString()); } catch { return; }
         const t = ev.type || "";
         if (t === "session.created" || t === "session.updated") {
-          handshakeDone = true; this.ready = true; this._state("ready");
+          handshakeDone = true; this.ready = true; this.readyAt = Date.now();
+          this._state("ready");
           return;
         }
         if (!handshakeDone && (t === "error" || ev.code)) {
@@ -346,17 +356,22 @@ class RelaySession {
     const q = new URLSearchParams({
       stream, target: stream === "mate" ? cfg.target_mate : cfg.target_self,
       voice: cfg.voice || "", audio: cfg.play_audio ? "1" : "0" });
+    // 模型自选：服务端只收白名单内的值，其余回落服务端默认（ready 回实际模型）
+    if (cfg.dash_model) q.set("model", cfg.dash_model);
     this.url = `${base}/ws/translate?${q}`;
     this.token = cfg.token || "";
     this.ws = null; this.ready = false; this._stop = false;
   }
   start() { this._stop = false; this._loop(); }
   stop() { this._stop = true; try { this.ws && this.ws.close(); } catch {} }
+  // 与 DirectSession 一致的事件助手：sendAudio 丢帧/commit 空缓冲分支要用，
+  // 缺了会在 ipcMain 回调里同步抛 TypeError（曾致主进程未捕获异常）
+  _ev(e)    { this.emit("rt-ev", { stream: this.stream, ev: e }); }
   async _loop() {
     let backoff = 1;
     while (!this._stop) {
       this.emit("rt-state", { stream: this.stream, state: "connecting" });
-      let gotReady = false, terminal = false;
+      let gotReady = false, terminal = false, termReason = "";
       const connectAt = Date.now();
       try {
         await new Promise((res) => {
@@ -371,12 +386,24 @@ class RelaySession {
             if (ev.type === "ready") {
               this.ready = true; gotReady = true;
               this.emit("rt-state", { stream: this.stream, state: "ready" });
+              // 服务端协商降级（热词/音色/音频输出/手动断句被上游拒绝）会随 ready 下发；
+              // 透传给 UI（与 DirectSession 的 fallback 提示对齐），避免静默降级——
+              // 典型后果：audio 被降级后永远收不到 TTS 帧，界面却毫无提示
+              if (Array.isArray(ev.degraded) && ev.degraded.length) {
+                const NAMES = { phrases: "术语热词", voice: "音色",
+                                audio: "音频播报", manual: "手动断句" };
+                this._ev({ type: "error", code: "fallback",
+                           msg: "服务器已降级：" +
+                                ev.degraded.map((d) => NAMES[d] || d).join("、") +
+                                "不可用" });
+              }
             } else if (ev.type === "closed") {
               // 服务端主动结束（可能紧跟终态 error）：不再把 closed 当"干净"跳过退避
               this.emit("rt-state", { stream: this.stream, state: "closed" });
             } else if (ev.type === "error" && TERMINAL.has(ev.code)) {
               // 终态错误：照常透传给 UI 显示原因，但连接结束后不再重连
               terminal = true;
+              termReason = ev.msg || ev.code;
               this.emit("rt-ev", { stream: this.stream, ev });
             }
             else if (ev.type === "audio")
@@ -389,6 +416,11 @@ class RelaySession {
           { type: "error", code: "conn", msg: String(e.message || e) } });
       }
       this.ready = false;
+      if (terminal)
+        // 终态退出：补发带原因的 closed，让 UI 复位通道芯片/测试状态
+        // （running 已由终态 rt-ev 复位；裸 closed 不带 reason，服务端结束后仍会重连）
+        this.emit("rt-state", { stream: this.stream, state: "closed",
+                                reason: termReason });
       if (this._stop || terminal) break;
       // 连接曾 ready 且存活 >= 30s 才重置退避；否则一律按失败退避后重连，防重连风暴
       if (gotReady && Date.now() - connectAt >= 30000) backoff = 1;

@@ -6,15 +6,15 @@ const pttDot = document.getElementById('pttDot');
 const mateDot = document.getElementById('mateDot');
 const root = document.documentElement;
 
-const bubbles = new Map();   // key -> {el, srcEl, dstEl, timer}
+const bubbles = new Map();   // key -> {el, srcEl, dstEl, timer, fadeTimer}
 let cfg = { max_bubbles: 6, overlay_src_color: '#b8c2cc', overlay_dst_color: '#ffffff',
             overlay_opacity: .6, overlay_font_scale: 1, overlay_fade_sec: 20,
             overlay_show_src: true, click_through: false, overlay_locked: false, ui_lang: 'zh' };
-const EN = { '队友': 'Mate', '穿透': 'Pin', '就绪': 'Ready' };
-const t = (s) => (cfg.ui_lang === 'en' ? EN[s] || s : s);
+/* 文案复用 i18n.js 同一词典（overlay.html 已引入），随主窗推来的 ui_lang 切换 */
+const t = (s) => tr(s);
 
 let mateTimer = null;
-api.on('cfg', (c) => { Object.assign(cfg, c); applyStyle(); });
+api.on('cfg', (c) => { Object.assign(cfg, c); setLang(cfg.ui_lang); applyStyle(); });
 api.on('seg', upsert);
 api.on('seg-done', ({ key }) => {
   const b = bubbles.get(key);
@@ -48,18 +48,21 @@ function applyStyle() {
 }
 
 function scheduleFade(key, b) {
-  clearTimeout(b.timer);
+  clearTimeout(b.timer); clearTimeout(b.fadeTimer);
+  b.el.classList.remove('fade');   // 迟到更新重排淡出：先恢复可见，再重新计时
   const sec = +cfg.overlay_fade_sec || 0;
   if (!sec) return;
   b.timer = setTimeout(() => {
     b.el.classList.add('fade');
-    setTimeout(() => remove(key), 1300);
+    // 内层移除定时器同样入册：迟到更新重排时才能真正推迟移除，remove 时一并清掉
+    b.fadeTimer = setTimeout(() => remove(key), 1300);
   }, sec * 1000);
 }
 function remove(key) {
   const b = bubbles.get(key);
   if (!b) return;
-  clearTimeout(b.timer); b.el.remove(); bubbles.delete(key);
+  clearTimeout(b.timer); clearTimeout(b.fadeTimer);
+  b.el.remove(); bubbles.delete(key);
 }
 function trim() {
   const max = cfg.max_bubbles || 6;
@@ -78,7 +81,7 @@ function upsert(m) {
     const src = document.createElement('div'); src.className = 'src'; src.style.color = cfg.overlay_src_color;
     el.append(who, dst, src);
     list.appendChild(el);
-    b = { el, srcEl: src, dstEl: dst, timer: null };
+    b = { el, srcEl: src, dstEl: dst, timer: null, fadeTimer: null };
     bubbles.set(m.key, b);
     trim();
   }
@@ -118,4 +121,10 @@ document.getElementById('grip').addEventListener('mousedown', (e) => {
   api.ovSize('start');
 });
 document.getElementById('btnHide').onclick = () => api.overlayCtl('hide');
-document.getElementById('btnFold').onclick = () => document.body.classList.toggle('folded');
+/* 折叠/展开：切换样式，并让主进程把窗口高度收到顶栏高（34px）。
+ * 只切 CSS 的话窗口边界不变，非穿透模式下折叠条下方会留下一块
+ * 透明但拦截鼠标的死区，挡住游戏点击 */
+document.getElementById('btnFold').onclick = () => {
+  const folded = document.body.classList.toggle('folded');
+  api.overlayCtl(folded ? 'fold' : 'unfold');
+};

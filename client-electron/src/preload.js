@@ -15,7 +15,6 @@ contextBridge.exposeInMainWorld('api', {
   srvLogout: () => ipcRenderer.invoke('srv:logout'),
   winMin: () => ipcRenderer.send('win:min'),
   winClose: () => ipcRenderer.send('win:close'),
-  winMax: () => ipcRenderer.send('win:max'),
   overlayShow: (show) => ipcRenderer.send('overlay:show', show),
   overlayThrough: (on) => ipcRenderer.send('overlay:through', on),
   recordHotkey: () => ipcRenderer.send('hotkey:record'),

@@ -184,7 +184,7 @@ input[type=range] { accent-color: var(--accent); flex: 1; max-width: 240px; }
 .swatch::-webkit-color-swatch { border: 0; border-radius: 4px; }
 .ov-preview { border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
   background: rgba(10,14,20,.7); border: 1px solid rgba(255,255,255,.06);
-  box-shadow: 0 0 0 100vmax rgba(0,0,0,0) inset; min-height: 180px;
+  min-height: 180px;
   background-image: linear-gradient(135deg, rgba(40,60,50,.5), rgba(60,40,30,.5)); }
 .pv-b { padding: 2px 0 6px; border-bottom: 1px solid rgba(255,255,255,.06); }
 .pv-b:last-child { border-bottom: 0; }

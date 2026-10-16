@@ -129,9 +129,9 @@
           <div class="card">
             <div class="card-head"><b data-t="预览">预览</b></div>
             <div class="ov-preview" id="ovPreview">
-              <div class="pv-b"><span class="pv-who c1">队友1</span><div class="pv-dst">掩护我，我在下包</div><div class="pv-src">Cover me, I'm planting the spike</div></div>
-              <div class="pv-b"><span class="pv-who c2">队友2</span><div class="pv-dst">B 大两个人，一个残血</div><div class="pv-src">Two B main, one is lit</div></div>
-              <div class="pv-b"><span class="pv-who me">我</span><div class="pv-dst">Rotate to A, I'll smoke heaven</div><div class="pv-src">转 A，我给高台烟</div></div>
+              <div class="pv-b"><span class="pv-who c1" data-t="队友1">队友1</span><div class="pv-dst">掩护我，我在下包</div><div class="pv-src">Cover me, I'm planting the spike</div></div>
+              <div class="pv-b"><span class="pv-who c2" data-t="队友2">队友2</span><div class="pv-dst">B 大两个人，一个残血</div><div class="pv-src">Two B main, one is lit</div></div>
+              <div class="pv-b"><span class="pv-who me" data-t="我">我</span><div class="pv-dst">Rotate to A, I'll smoke heaven</div><div class="pv-src">转 A，我给高台烟</div></div>
             </div>
           </div>
         </div>
@@ -180,6 +180,7 @@
             </div>
             <div class="srv-only">
               <label class="frow"><span data-t="服务器地址">服务器地址</span><input id="sServer" class="input" placeholder="https://api.example.com"></label>
+              <label class="frow"><span data-t="模型名">模型名</span><select id="sModelSrv" class="input"></select></label>
               <div class="frow"><span data-t="账号">账号</span>
                 <input id="sUser" class="input half" data-tp="用户名" placeholder="用户名">
                 <input id="sPass" class="input half" type="password" data-tp="密码" placeholder="密码"></div>

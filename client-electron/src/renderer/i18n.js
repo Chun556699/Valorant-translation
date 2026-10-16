@@ -50,7 +50,7 @@ const _MAP = {
       "Hold your PTT key and speak; translation shows on the overlay. Meters verify capture.",
   "已最小化到托盘，右键托盘图标可退出": "Minimized to tray — right-click to quit",
   "打开主窗口": "Open", "显示字幕窗": "Show overlay",
-  "字幕穿透": "Click-through", "未开启翻译": "Not translating",
+  "字幕穿透": "Click-through", "锁定字幕窗": "Lock overlay", "未开启翻译": "Not translating",
   "说话中…（松开完成）": "Speaking…",
   "已保存（输入新 Key 覆盖）": "Saved (type a new key to overwrite)",
   // 服务器账号（设置页）
@@ -90,6 +90,7 @@ const _MAP = {
   "队友译文定稿后也自动复制（我的译文总会复制）": "Also copy teammates' final translations (yours are always copied)",
   "断句静音": "Segment silence", "鼠标": "Mouse", "键盘": "Key", "左键": "Left", "右键": "Right", "中键": "Middle",
   "队友": "Mate", "按住": "Hold", "说话": "to talk", "仅文字字幕": "Text captions only",
+  "队友1": "Mate 1", "队友2": "Mate 2",   // 字幕页预览样例
   "说话，松开自动翻译并复制": "to talk, release to translate & copy",
   "请先在设置页填写服务器地址": "Please set the server URL in Settings",
   "请先登录账号或使用游客模式": "Please log in or use Guest mode first",
@@ -110,3 +111,5 @@ const _MAP = {
 
 function setLang(l) { _lang = l || "zh"; }
 function tr(s) { return _lang === "zh" || !s ? s : (_MAP[s] || s); }
+/* 供主进程（托盘菜单）复用同一词典；浏览器端无 module 对象，不受影响 */
+if (typeof module !== "undefined" && module.exports) module.exports = { setLang, tr };

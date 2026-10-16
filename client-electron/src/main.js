@@ -6,9 +6,17 @@ const { app, BrowserWindow, Tray, Menu, ipcMain, screen,
         session, desktopCapturer, dialog, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const i18n = require('./renderer/i18n');   // 托盘菜单文案复用渲染层同一词典
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) { app.quit(); }
+
+/* 主进程未捕获异常兜底：只记日志不退出（会话层错误应经 rt-ev 上报给 UI）。
+ * 曾因 RelaySession 缺 _ev 之类的缺陷在 ipcMain 回调里同步抛 TypeError，
+ * 默认无处理器时整个应用崩溃/弹错误框——这里保证主进程存活。 */
+process.on('uncaughtException', (e) => {
+  console.error('uncaughtException:', (e && e.stack) || e);
+});
 
 let mainWin = null, overlayWin = null, tray = null;
 let recordingHotkey = false;
@@ -127,8 +135,10 @@ function createOverlay() {
   const saveBounds = () => {
     clearTimeout(boundsTimer);
     boundsTimer = setTimeout(() => {
-      if (overlayWin && !overlayWin.isDestroyed())
-        writeCfg({ overlay_bounds: overlayWin.getBounds() });
+      if (!overlayWin || overlayWin.isDestroyed()) return;
+      const b = overlayWin.getBounds();
+      if (ovUnfoldedH != null) b.height = ovUnfoldedH;   // 折叠期间的 34px 是临时高度，不持久化
+      writeCfg({ overlay_bounds: b });
     }, 500);
   };
   overlayWin.on('moved', saveBounds);
@@ -137,6 +147,24 @@ function createOverlay() {
     overlayWin = null;
     if (overlayTopTimer) { clearInterval(overlayTopTimer); overlayTopTimer = null; }
   });
+}
+
+/* 折叠/展开：把窗口高度收到顶栏高（34px = minHeight）。只切 CSS 的话窗口边界不变，
+ * 非穿透模式下折叠条下方会留下一块透明但拦截鼠标的死区挡住游戏点击；
+ * 展开高度记忆在内存里，展开时还原 */
+let ovUnfoldedH = null;
+function foldOverlay(fold) {
+  if (!overlayWin || overlayWin.isDestroyed()) return;
+  const b = overlayWin.getBounds();
+  if (fold) {
+    if (ovUnfoldedH != null) return;   // 已折叠
+    ovUnfoldedH = Math.max(b.height, 60);
+    overlayWin.setBounds({ x: b.x, y: b.y, width: b.width, height: 34 });
+  } else {
+    if (ovUnfoldedH == null) return;   // 已展开
+    overlayWin.setBounds({ x: b.x, y: b.y, width: b.width, height: ovUnfoldedH });
+    ovUnfoldedH = null;
+  }
 }
 
 /* 无边框置顶可能被抢，周期复位（随窗口销毁清理） */
@@ -156,39 +184,53 @@ function createMain() {
   });
   mainWin.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   mainWin.once('ready-to-show', () => mainWin.show());
+  // Alt+F4/任务栏关闭也走"关到托盘"，与标题栏关闭 (win:close) 行为一致；
+  // 真退出时 app.isQuitting 已置真（托盘退出/before-quit），不受阻
+  mainWin.on('close', (e) => {
+    if (!app.isQuitting) { e.preventDefault(); mainWin.hide(); }
+  });
   mainWin.on('closed', () => { mainWin = null; });
 }
 
 /* ---------- 托盘 ---------- */
 const trayState = { running: false, through: false, ovVisible: true };
-ipcMain.on('tray:state', (_e, s) => Object.assign(trayState, s));
+/* 悬停提示随运行状态切换（翻译中/待机），图标不换：暂无第二张资源 */
+function updateTrayTip() {
+  if (tray) tray.setToolTip(`VTranslate — ${trayState.running ? '翻译中' : '待机'}`);
+}
+ipcMain.on('tray:state', (_e, s) => {
+  Object.assign(trayState, s);
+  updateTrayTip();
+});
 
 function buildTrayMenu() {
+  i18n.setLang(readCfg().ui_lang);   // 语言切换本就提示重启，构建菜单时选词即可
+  const T = i18n.tr;
   return Menu.buildFromTemplate([
-    { label: '打开主窗口',
-      click: () => { if (mainWin) { mainWin.show(); mainWin.focus(); } } },
-    { label: trayState.running ? '停止翻译' : '开始翻译',
+    { label: T('打开主窗口'),
+      click: () => { if (!mainWin) createMain(); mainWin.show(); mainWin.focus(); } },
+    { label: trayState.running ? T('停止翻译') : T('开始翻译'),
       click: () => send('tray', 'toggle-run') },
     { type: 'separator' },
-    { label: '显示字幕窗', type: 'checkbox', checked: trayState.ovVisible,
+    { label: T('显示字幕窗'), type: 'checkbox', checked: trayState.ovVisible,
       click: () => send('tray', 'toggle-overlay') },
-    { label: '字幕穿透', type: 'checkbox', checked: trayState.through,
+    { label: T('字幕穿透'), type: 'checkbox', checked: trayState.through,
       click: () => send('tray', 'toggle-through') },
-    { label: '锁定字幕窗', type: 'checkbox', checked: trayState.locked,
+    { label: T('锁定字幕窗'), type: 'checkbox', checked: trayState.locked,
       click: () => send('tray', 'toggle-lock') },
     { type: 'separator' },
-    { label: '设置',
+    { label: T('设置'),
       click: () => {
         if (mainWin) { mainWin.show(); mainWin.focus(); }
         send('tray', 'open-settings');
       } },
-    { label: '退出', click: () => { app.isQuitting = true; app.quit(); } },
+    { label: T('退出'), click: () => { app.isQuitting = true; app.quit(); } },
   ]);
 }
 
 function createTray() {
   tray = new Tray(path.join(__dirname, '..', 'assets', 'icon.png'));
-  tray.setToolTip('VTranslate');
+  updateTrayTip();
   tray.setContextMenu(buildTrayMenu());
   tray.on('right-click', () => tray.setContextMenu(buildTrayMenu())); // 动态刷新
   tray.on('double-click', () => mainWin && (mainWin.show(), mainWin.focus()));
@@ -216,6 +258,14 @@ function normalizeHotkey(hk) {
   return null;
 }
 
+/* 热键内存缓存：全局钩子每次按键/点击都比对热键，不能每次 readFileSync（慢盘机器会拖慢全局输入）。
+ * 惰性加载；应用内改热键的唯一落盘路径是 cfg:set，写 hotkey 时在那里失效重读 */
+let hkCache;
+function hotkeyOf() {
+  if (hkCache === undefined) hkCache = normalizeHotkey(readCfg().hotkey);
+  return hkCache;
+}
+
 function startHook() {
   try {
     const mod = require('uiohook-napi');
@@ -228,7 +278,7 @@ function startHook() {
       send('ptt', on);
     };
     const keyOf = () => {
-      const hk = normalizeHotkey(readCfg().hotkey);
+      const hk = hotkeyOf();
       if (!hk && !hkBadWarned) {
         hkBadWarned = true;
         send('hotkey-invalid');
@@ -294,14 +344,11 @@ ipcMain.handle('cfg:set', (_e, patch) => {
     if (k === 'dash_key' && !String(patch[k] || '').trim()) continue;
     clean[k] = patch[k];
   }
+  if ('hotkey' in clean) hkCache = undefined;   // 热键已改：缓存失效，下次输入事件重读
   return maskCfg(writeCfg(clean));
 });
 ipcMain.on('win:min', () => mainWin && mainWin.minimize());
 ipcMain.on('win:close', () => mainWin && mainWin.hide());   // 关到托盘
-ipcMain.on('win:max', () => {
-  if (!mainWin) return;
-  mainWin.isMaximized() ? mainWin.unmaximize() : mainWin.maximize();
-});
 ipcMain.on('overlay:show', (_e, show) => {
   if (!overlayWin) createOverlay();
   else show ? overlayWin.show() : overlayWin.hide();
@@ -347,7 +394,8 @@ ipcMain.on('ovdrag', (_e, phase) => {
   ovDragOff = { x: p.x - wx, y: p.y - wy };
   if (ovDragTimer) clearInterval(ovDragTimer);
   ovDragTimer = setInterval(() => {
-    if (!overlayWin || overlayWin.isDestroyed() || !ovDragOff) return;
+    // 窗口已销毁时自清（renderer 无人再发 stop），防 16ms 定时器泄漏
+    if (!overlayWin || overlayWin.isDestroyed() || !ovDragOff) { clearInterval(ovDragTimer); ovDragTimer = null; return; }
     const c = screen.getCursorScreenPoint();
     overlayWin.setPosition(Math.round(c.x - ovDragOff.x),
                            Math.round(c.y - ovDragOff.y));
@@ -363,7 +411,8 @@ ipcMain.on('ovsize', (_e, phase) => {
   if (!overlayWin || overlayWin.isDestroyed()) return;
   if (ovSizeTimer) clearInterval(ovSizeTimer);
   ovSizeTimer = setInterval(() => {
-    if (!overlayWin || overlayWin.isDestroyed()) return;
+    // 窗口已销毁时自清（renderer 无人再发 stop），防 16ms 定时器泄漏
+    if (!overlayWin || overlayWin.isDestroyed()) { clearInterval(ovSizeTimer); ovSizeTimer = null; return; }
     const c = screen.getCursorScreenPoint();
     const [wx, wy] = overlayWin.getPosition();
     overlayWin.setSize(Math.max(220, Math.round(c.x - wx + 10)),
@@ -389,7 +438,11 @@ ipcMain.on('hotkey:record', () => {
 });
 // renderer -> overlay 转发；overlay -> 主窗 反向控制
 ipcMain.on('ov', (_e, ch, payload) => sendOverlay(ch, payload));
-ipcMain.on('ovctl', (_e, action) => send('ovctl', action));
+// 折叠/展开由主进程直接改窗口高度，其余 overlay 控制动作转发给主窗
+ipcMain.on('ovctl', (_e, action) => {
+  if (action === 'fold' || action === 'unfold') foldOverlay(action === 'fold');
+  else send('ovctl', action);
+});
 ipcMain.on('app:relaunch', () => { app.relaunch(); app.exit(0); });
 /* 剪贴板写必须走主进程：窗口失焦/最小化时 navigator.clipboard 会静默失败 */
 ipcMain.on('clip:write', (_e, text) => {
@@ -487,7 +540,8 @@ ipcMain.handle('session:test', async (_e, opts) => {
   });
 });
 
-app.whenReady().then(() => {
+/* 单实例未获锁的实例不初始化：防被劝退实例短暂 ready 闪窗/闪托盘/起全局钩子 */
+if (gotLock) app.whenReady().then(() => {
   app.setAppUserModelId('chunfff.VTranslate');
 
   // 权限收紧：仅放行本应用自有窗口的 'media'（麦克风）请求，其余全拒
@@ -516,7 +570,9 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => { /* 全关也不退，住托盘 */ });
-app.on('before-quit', () => { try { uIOhook && uIOhook.stop(); } catch {} });
+app.on('before-quit', () => { app.isQuitting = true; try { uIOhook && uIOhook.stop(); } catch {} });
 app.on('second-instance', () => {
-  if (mainWin) { mainWin.show(); mainWin.focus(); }
+  if (!mainWin) createMain();   // 主窗已销毁时兜底重建
+  mainWin.show();
+  mainWin.focus();
 });

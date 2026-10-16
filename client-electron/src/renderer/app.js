@@ -93,7 +93,16 @@ function fillStaticSelects() {
 function initNav() {
   document.querySelectorAll('.nav').forEach(b => { b.onclick = () => switchPage(b.dataset.p); });
   $('btnMin').onclick = () => api.winMin();
-  $('btnClose').onclick = () => { api.winClose(); };
+  // 关闭是隐藏到托盘：首次点关闭给一次性提示（词条沿用 i18n），延迟再隐藏，否则窗口先没了 toast 看不见
+  $('btnClose').onclick = () => {
+    if (!localStorage.getItem('vt_tray_tip')) {
+      localStorage.setItem('vt_tray_tip', '1');
+      toast(tr('已最小化到托盘，右键托盘图标可退出'));
+      setTimeout(() => api.winClose(), 1500);
+      return;
+    }
+    api.winClose();
+  };
   $('sideAcct').onclick = () => switchPage('settings');
 }
 function switchPage(p) {
@@ -161,12 +170,12 @@ function setRunning(on) {
   if (on && !canStart()) return;
   state.running = on;
   $('btnRun').classList.toggle('on', on);
-  $('homeStatus').textContent = on ? tr('翻译中…') : tr('准备就绪');
+  setStatus(on ? tr('翻译中') : tr('就绪'));   // 悬浮窗 + 首页状态行同步
+  $('homeStatus').textContent = on ? tr('翻译中…') : tr('准备就绪');   // 首页状态行保留完整文案
   $('tbState').classList.toggle('live', on);
   $('tbState').querySelector('b').textContent = on ? tr('翻译中') : tr('待机');
   cfgSet({ running: on });
   if (on) startSessions(); else stopSessions();
-  setStatus(on ? tr('翻译中') : tr('就绪'));
   pushTrayState();
 }
 function setMateOn(on) {
@@ -180,7 +189,7 @@ function setMateOn(on) {
 async function startMate() {
   api.sessionStart('mate');
   try { await loopback.startLoopback(); loopback.setFilter(cfg().mate_filter); }
-  catch (e) { setStatus(tr('回环采集失败: ') + e.message); }
+  catch (e) { errorStatus(tr('回环采集失败: ') + e.message); }
 }
 function startSessions() {
   state.speakerMap = Object.create(null); state.nextFriend = 1;
@@ -209,10 +218,23 @@ function setChan(stream, s) {
   el.classList.toggle('err', s === 'closed');
   $(stream === 'mate' ? 'stMate' : 'stSelf').textContent = tr(CH_TEXT[s] || s);
 }
-function onRtState({ stream, state: s }) {
+function onRtState({ stream, state: s, reason }) {
   setChan(stream, s);
   if (stream === 'self') $('chStatus').textContent = tr(CH_TEXT[s] || s);
   if (s === 'ready') setStatus(state.running ? tr('翻译中') : tr('就绪'));
+  // 带 reason 的 closed = 会话终态退出、不再重连（直连 Key 无效 / 中转终态错误）：
+  // 复位运行/测试状态并在状态栏明示原因（主动停止的事件已被主进程代际守卫丢弃）。
+  // 裸 closed（服务端主动结束、随后仍会重连）不带 reason，不在此处理，避免破坏重连
+  if (s === 'closed' && reason) {
+    const who = stream === 'mate' ? tr('队友') : tr('自翻');
+    if (state.running) setRunning(false);   // 先复位（内部会把状态写回"就绪"）
+    if (state.testSelf && stream === 'self') {
+      state.testSelf = false;
+      $('btnTestSelf').textContent = tr('开始测试（拉起自翻通道）');
+      $('btnTestSelf').classList.remove('running');
+    }
+    setStatus(`[${who}] ${reason}`);        // 最后落笔：原因不被复位流程覆盖
+  }
 }
 const TERMINAL_MSG = {
   unauthorized: '登录已失效，请重新登录', insufficient_balance: '额度已用完，请充值后重新开始',
@@ -309,8 +331,8 @@ function onPtt(on) {
   $('pttHint').classList.toggle('on', on);
   api.toOverlay('ptt', on);
   if (on) {
-    if (!state.running && !state.testSelf) { setStatus(tr('未开启翻译')); return; }
-    if (state.chState.self !== 'ready') { setStatus(tr('自翻通道未就绪，检查 Key/网络')); return; }
+    if (!state.running && !state.testSelf) { errorStatus(tr('未开启翻译')); return; }
+    if (state.chState.self !== 'ready') { errorStatus(tr('自翻通道未就绪，检查 Key/网络')); return; }
     if (state.tailTimer) {       // 上一句还在收尾：立即提交，再开新句
       clearTimeout(state.tailTimer); state.tailTimer = null;
       api.sessionCommit('self');
@@ -339,18 +361,18 @@ async function startMic() {
     if ((state.running || state.testSelf) && state.pttSending) api.sessionAudio('self', b);
     else { state.preroll.push(b); if (state.preroll.length > PREROLL_CHUNKS) state.preroll.shift(); }
   };
-  mic.onEnded = () => setStatus(tr('麦克风已断开（设备拔出？），请在设置页重选'));
+  mic.onEnded = () => errorStatus(tr('麦克风已断开（设备拔出？），请在设置页重选'));
   try { await mic.startMic(cfg().mic_device || undefined); }
-  catch (e) { setStatus(tr('麦克风失败: ') + e.message); }
+  catch (e) { errorStatus(tr('麦克风失败: ') + e.message); }
 }
 loopback.onLevel = (l) => { const p = levelPct(l) + '%'; $('mateBar').style.width = p; $('mateBar2').style.width = p; };
 loopback.onEnded = () => {
-  setStatus(tr('系统音频回环已断开'));
+  errorStatus(tr('系统音频回环已断开'));
   if (state.running && state.mateOn) {
     // 尝试自动恢复一次（例如默认输出设备切换后）
     loopback.startLoopback()
       .then(() => { loopback.setFilter(cfg().mate_filter); setStatus(tr('回环已恢复')); })
-      .catch(() => setStatus(tr('回环恢复失败，请停止后重新开始翻译')));
+      .catch(() => errorStatus(tr('回环恢复失败，请停止后重新开始翻译')));
   }
 };
 loopback.onChunk = (pcm) => {
@@ -390,7 +412,11 @@ function pushOverlayCfg() {
     overlay_locked: c.overlay_locked, ui_lang: c.ui_lang,
   });
 }
-function setStatus(s) { api.toOverlay('status', s); }
+/* 状态同步两处：主窗首页状态行 + 悬浮窗状态栏。悬浮窗可被隐藏且状态条有省略截断，
+ * 不能再作为唯一出口；错误类消息走 errorStatus 再补主窗 toast */
+function setStatus(s) { $('homeStatus').textContent = s; api.toOverlay('status', s); }
+/* 错误类状态（麦克风失败/PTT 未就绪/回环断开等）；终态错误在 onRtEv 已自带 toast，勿用此函数 */
+function errorStatus(s) { setStatus(s); toast(s); }
 
 /* ================= 字幕页 ================= */
 function initSubtitle() {
@@ -491,6 +517,7 @@ function initSettings() {
   $('sKey').value = '';
   $('sKey').placeholder = c.has_dash_key ? tr('已保存（输入新 Key 覆盖）') : 'sk-xxxx';
   $('sUrl').value = c.dash_ws_url; $('sModel').value = c.dash_model;
+  $('sModelSrv').value = c.dash_model;
   $('sServer').value = c.server_url;
   $('sUser').value = c.username || '';
   $('sTargetMate').value = c.target_mate; $('sTargetSelf').value = c.target_self;
@@ -523,7 +550,8 @@ function initSettings() {
   // 全部控件 → 即时保存
   const map = {
     sUiLang: 'ui_lang', sMode: 'mode', sKey: 'dash_key', sUrl: 'dash_ws_url',
-    sModel: 'dash_model', sServer: 'server_url', sTargetMate: 'target_mate',
+    sModel: 'dash_model', sModelSrv: 'dash_model', sServer: 'server_url',
+    sTargetMate: 'target_mate',
     sTargetSelf: 'target_self', sMic: 'mic_device', sOut: 'output_device',
   };
   for (const [id, key] of Object.entries(map)) {
@@ -608,6 +636,19 @@ async function refreshServer() {
     if (r.data.price_fen_per_minute) acct.price = r.data.price_fen_per_minute;
     $('btnRegister').disabled = r.data.allow_register === false;
     $('btnGuest').disabled = r.data.allow_guest === false;
+    // 模型下拉来自服务端白名单；已存值不在名单内时回落第一项（服务端行为一致）
+    const models = Array.isArray(r.data.models)
+      ? r.data.models.filter(m => typeof m === 'string' && m) : [];
+    if (models.length) {
+      const sel = $('sModelSrv'), cur = cfg().dash_model;
+      sel.innerHTML = '';
+      for (const m of models) {
+        const o = document.createElement('option');
+        o.value = m; o.textContent = m;
+        sel.appendChild(o);
+      }
+      sel.value = models.includes(cur) ? cur : models[0];
+    }
   }
   refreshAccount();
 }
@@ -645,6 +686,8 @@ function syncMode() {
   const direct = cfg().mode === 'direct';
   document.querySelectorAll('.direct-only').forEach(el => el.classList.toggle('hidden', !direct));
   document.querySelectorAll('.srv-only').forEach(el => el.classList.toggle('hidden', direct));
+  // 两个模型字段共用 dash_model：切换模式时同步显示（服务器模式选项由 refreshServer 填充）
+  $('sModel').value = cfg().dash_model; $('sModelSrv').value = cfg().dash_model;
   $('tbMode').textContent = direct ? tr('直连') : tr('服务器');
   if (direct) $('sideBal').textContent = tr('本地直连');
   else renderAccount();
@@ -681,8 +724,9 @@ function toast(msg) {
 
 /* ================= 帮助 ================= */
 function initHelp() {
-  $('tutorialText').textContent = cfg().ui_lang === 'en' ? TUTORIAL_EN : TUTORIAL;
-  $('contactText').textContent = CONTACT;
+  const en = cfg().ui_lang === 'en';
+  $('tutorialText').textContent = en ? TUTORIAL_EN : TUTORIAL;
+  $('contactText').textContent = en ? CONTACT_EN : CONTACT;
 }
 const TUTORIAL = `═══════ VTranslate 使用指南 ═══════
 
@@ -736,5 +780,7 @@ const TUTORIAL_EN = `═══════ VTranslate Guide ══════�
  • Ban risk? None — the app only touches audio devices, never the game process.`;
 const CONTACT = `问题反馈 / 商务合作：
 QQ 群：在官网或推广页获取最新群号
-邮箱：support@example.com（请替换为你的联系方式）
 开源仓库：https://gitee.com/chunfff/v-translation`;
+const CONTACT_EN = `Feedback / business inquiries:
+QQ group: get the latest group number from our website or promo pages
+Repository: https://gitee.com/chunfff/v-translation`;

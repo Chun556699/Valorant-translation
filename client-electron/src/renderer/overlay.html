@@ -55,7 +55,7 @@ body.nosrc .src { display: none; }
 body.locked #grip, body.through #grip, body.folded #grip { display: none; }
 body.through.barhover #grip { display: block; }
 body.folded #list { display: none; }
-body.folded #wrap { height: 30px; }
+body.folded #wrap { height: 34px; }   /* 与主进程折叠后的窗口高度一致，避免底部留死区 */
 </style></head>
 <body>
 <div id="wrap">
@@ -73,6 +73,7 @@ body.folded #wrap { height: 30px; }
   <div id="list"></div>
   <div id="grip" title="拖拽调整大小"></div>
 </div>
+<script src="i18n.js"></script>
 <script src="overlay.js"></script>
 </body>
 </html>
