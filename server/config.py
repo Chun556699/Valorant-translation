@@ -15,6 +15,9 @@ DASHSCOPE_WS_URL = _env(
     "wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
 )
 TRANSLATE_MODEL = _env("TRANSLATE_MODEL", "qwen3.8-livetranslate-flash-realtime")
+# 客户端可自选的中转模型白名单（逗号分隔）；不在名单内的请求回落 TRANSLATE_MODEL。
+# 计费按统一单价，暴露更贵模型前先评估 PRICE_FEN_PER_MINUTE 是否需要调整
+ALLOWED_MODELS = [m.strip() for m in _env("ALLOWED_MODELS", TRANSLATE_MODEL).split(",") if m.strip()]
 # 可选：JSON 字符串，合并进 session.update 的 session 字段，用于不打码调参
 DASH_SESSION_EXTRA = json.loads(_env("DASH_SESSION_EXTRA_JSON", "{}") or "{}")
 

@@ -219,6 +219,7 @@ def meta():
     return {"code": 1, "announcement": config.ANNOUNCEMENT,
             "price_fen_per_minute": config.PRICE_FEN_PER_MINUTE,
             "voices": config.VOICES,
+            "models": config.ALLOWED_MODELS,
             "targets": list(TARGETS),
             "allow_register": config.ALLOW_REGISTER,
             "allow_guest": config.ALLOW_GUEST,
@@ -898,7 +899,8 @@ def admin_grant(req: GrantReq, request: Request):
 # ---------------- 翻译中转 WS ----------------
 @app.websocket("/ws/translate")
 async def ws_translate(ws: WebSocket, token: str = "", stream: str = "mate",
-                       target: str = "zh", voice: str = "", audio: int = 0):
+                       target: str = "zh", voice: str = "", audio: int = 0,
+                       model: str = ""):
     await ws.accept()
     # 优先取 Authorization: Bearer，兼容 ?token= 查询参数（浏览器客户端）
     hdr = ws.headers.get("Authorization", "").removeprefix("Bearer ").strip()
@@ -915,8 +917,11 @@ async def ws_translate(ws: WebSocket, token: str = "", stream: str = "mate",
         target = "zh"
     if voice not in config.VOICES:
         voice = config.VOICES[0] if config.VOICES else "Cherry"
+    # 模型只收白名单内的值，其余回落默认（计费统一，不开放任意模型名）
+    if model not in config.ALLOWED_MODELS:
+        model = ""
     session = RelaySession(ws, user, stream, target, db,
-                           voice=voice, want_audio=bool(audio))
+                           voice=voice, want_audio=bool(audio), model=model)
     session.client_ip = ws.client.host if ws.client else ""
     if config.TRUST_PROXY:
         xff = ws.headers.get("X-Forwarded-For", "")

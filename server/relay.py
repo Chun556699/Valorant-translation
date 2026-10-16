@@ -194,13 +194,15 @@ class EventNormalizer:
 
 class RelaySession:
     def __init__(self, client_ws, user: dict, stream: str, target: str, db,
-                 voice: str = "", want_audio: bool = False):
+                 voice: str = "", want_audio: bool = False, model: str = ""):
         self.ws = client_ws            # starlette WebSocket (已 accept)
         self.user = user
         self.stream = stream           # "mate" | "self"
         self.target = target           # "zh" | "en" ...
         self.voice = voice
         self.want_audio = want_audio
+        # 客户端自选模型（app.py 已按白名单过滤），空则用服务端默认
+        self.model = model or config.TRANSLATE_MODEL
         self.db = db
 
         self.upstream = None           # websockets 连接或 None(mock)
@@ -340,7 +342,7 @@ class RelaySession:
     # ---------- 上游 ----------
     async def _open_upstream(self, tier: dict) -> str | None:
         """建连 + session.update，等到 session.updated 返回 None；被拒返回错误文本。"""
-        url = f"{config.DASHSCOPE_WS_URL}?model={config.TRANSLATE_MODEL}"
+        url = f"{config.DASHSCOPE_WS_URL}?model={self.model}"
         ws = await websockets.connect(
             url,
             additional_headers={"Authorization": f"Bearer {config.DASHSCOPE_API_KEY}"},
@@ -418,6 +420,7 @@ class RelaySession:
         ACTIVE[id(self)] = self
         self.db.touch_user(self.user_id)
         await self._send({"type": "ready", "stream": self.stream,
+                          "model": self.model,
                           "credit_seconds": int(self.credit_seconds),
                           "trial_seconds": int(self.trial_seconds),
                           "money_cents": int(self.money_cents),
